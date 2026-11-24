@@ -249,7 +249,7 @@ Application validation errors use Spring ProblemDetail. Spring Security handles 
 
 The `prod` Spring profile is designed for hosted environments:
 
-- Requires `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` and `JWT_SECRET_BASE64`.
+- Requires `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` and `JWT_SECRET_BASE64`. Render supplies the PostgreSQL connection URI through `DB_URL`; the Docker entrypoint adapts it to the JDBC URL format.
 - Does not fall back to the development JWT key. The application fails to start if the production secret is missing.
 - Disables Swagger UI and OpenAPI document endpoints.
 - Uses graceful shutdown, forwarded headers and conservative production error responses.
@@ -293,10 +293,7 @@ The integration test uses a disposable PostgreSQL 17 container through Testconta
 | Variable | Default | Purpose |
 |---|---|---|
 | SERVER_PORT | 8080 | HTTP port |
-| DB_URL | jdbc:postgresql://localhost:5432/task_management | JDBC URL override (local/Compose) |
-| DB_HOST | localhost | PostgreSQL hostname (production profile) |
-| DB_PORT | 5432 | PostgreSQL port (production profile) |
-| DB_NAME | task_management | PostgreSQL database name (production profile) |
+| DB_URL | jdbc:postgresql://localhost:5432/task_management | JDBC URL locally; Render Blueprint supplies a native PostgreSQL URI converted by the container entrypoint |
 | DB_USERNAME | task_user | Database username |
 | DB_PASSWORD | task_password | Database password |
 | JWT_SECRET_BASE64 | Development-only key | Base64 HMAC signing key; replace outside local development |
