@@ -1,59 +1,57 @@
-# Architecture — Advanced Task API
+# Architecture — Task Management API
 
 ## Request lifecycle
 
-```mermaid
+~~~mermaid
 flowchart TD
-    A["HTTP Request"] --> B["TaskController"]
-    B --> C["TaskService"]
-    C --> D["Task Specification + Pageable"]
-    D --> E["TaskRepository"]
-    E --> F[("PostgreSQL")]
-    F --> E
-    E --> C
-    C --> G["PageResponse DTO"]
-    G --> B
-    B --> H["HTTP JSON Response"]
-```
+    A["HTTP Request"] --> B["Spring Security Filter Chain"]
+    B --> C{"Public endpoint?"}
+    C -->|Yes| D["Auth Controller"]
+    C -->|No| E["JWT Decoder / Validator"]
+    E -->|Valid token| F["Task Controller"]
+    E -->|Invalid or missing token| G["401 Unauthorized"]
+    F --> H["Task Service"]
+    H --> I["Task Repository"]
+    I --> J[("PostgreSQL")]
+    J --> I
+    I --> H
+    H --> F
+    F --> K["HTTP JSON Response"]
+~~~
 
-## Responsibilities
+## Authentication lifecycle
 
-- **Controller:** maps HTTP routes, reads query parameters, validates request bodies and selects HTTP response codes.
-- **Service:** validates pagination/sort options, normalizes search input and builds a JPA Specification.
-- **Repository:** executes the generated query and count query through Spring Data JPA.
-- **Entity:** represents the persisted task record.
-- **DTOs:** define request and response shapes; JPA entities are never returned directly.
-- **GlobalExceptionHandler:** maps application, validation and parameter conversion errors to HTTP 400 or 404 Problem Details.
+1. POST /api/v1/auth/register validates the request, normalizes the email and stores a BCrypt password hash. New accounts receive the USER role.
+2. POST /api/v1/auth/login delegates credential verification to Spring Security's AuthenticationManager and DaoAuthenticationProvider.
+3. On successful authentication, JwtService issues an HS256 JWT with issuer, subject (email), issue time, expiration and role claims.
+4. The resource-server filter validates the token signature, issuer and time claims on every protected request.
+5. The JWT authentication converter maps the role claim into a Spring Security authority such as ROLE_USER.
 
-## GET /api/v1/tasks
+## Security boundaries
 
-Supported query parameters:
+- The API is stateless; HTTP sessions, form login, HTTP Basic and CSRF are disabled.
+- Register and login endpoints are public. Task endpoints require a valid Bearer access token.
+- Passwords are stored only as BCrypt hashes using work factor 12.
+- JWT signing material is read from JWT_SECRET_BASE64. The repository contains only a development fallback; deployment environments must provide a private random key of at least 32 decoded bytes.
+- Access tokens last 15 minutes by default.
+- This milestone authenticates a user but does not yet scope tasks by owner or restrict endpoints by role. All authenticated users can currently access the shared task collection.
 
-- `page`: zero-based page index, default 0.
-- `size`: page size, default 10, maximum 100.
-- `sortBy`: allow-listed fields `id`, `title`, `status`, `createdAt`.
-- `direction`: `asc` or `desc`, default desc.
-- `status`: optional task status.
-- `search`: optional case-insensitive substring search on title.
+## Components
 
-The allowed sort-field list prevents arbitrary property names from being passed to Spring Data sorting.
+- AuthController: exposes registration and login endpoints.
+- AuthService: normalizes email, validates password byte length, hashes new passwords and authenticates login requests.
+- CustomUserDetailsService: loads persisted users and maps their roles to Spring Security authorities.
+- JwtService: creates short-lived access tokens.
+- JwtConfig: loads the HMAC secret and configures JWT encoding and decoding.
+- SecurityConfig: configures stateless authentication, password encoding, public routes and protected routes.
+- TaskController / TaskService: expose and implement task operations after authentication.
+- Repositories: persist users and tasks with Spring Data JPA.
+- Flyway: applies versioned database migrations.
 
-## Filtering
+## Database and integration testing
 
-A JPA Specification builds predicates only for filters that are present. Status and title search can be combined. Spring Data applies pagination and sorting at database level instead of loading every task and filtering it in memory.
+Flyway creates the task and user tables. JPA validates entity mappings against the migrated schema. Integration tests use a disposable PostgreSQL 17 container through Testcontainers and exercise the HTTP API, including the authentication boundary.
 
-## PATCH /api/v1/tasks/{id}/status
+## Next security milestone
 
-The endpoint accepts only a status DTO. It loads the task, updates its status and saves it; title and description remain unchanged.
-
-## OpenAPI
-
-springdoc generates the OpenAPI definition from Spring MVC mappings and exposes Swagger UI for interactive API exploration.
-
-## Integration testing
-
-`TaskApiIntegrationTest` starts a disposable PostgreSQL container with Testcontainers, injects its connection settings into Spring Boot, runs Flyway migrations, and exercises the HTTP API against the real database.
-
-## Design boundaries
-
-This milestone does not yet implement users, ownership, authentication or authorization. Those are intentionally introduced as a separate security milestone so that the API/data-access layer can be understood and tested independently.
+Add a task-to-user relationship, derive the current user from the verified JWT principal, and scope every task query/update/delete to that owner. Then add explicit USER/ADMIN authorization rules and cross-user access-denial tests.

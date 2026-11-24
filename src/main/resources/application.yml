@@ -16,6 +16,14 @@ spring:
   flyway:
     enabled: true
 
+app:
+  security:
+    jwt:
+      issuer: task-management-api
+      # Development-only fallback. Set JWT_SECRET_BASE64 to a private random key in deployed environments.
+      secret-base64: ${JWT_SECRET_BASE64:VGhlLXNlY3JldC1rZXktZm9yLWxvY2FsLWRldmVsb3BtZW50LW9ubHktY2hhbmdlLW1l}
+      access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:PT15M}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html

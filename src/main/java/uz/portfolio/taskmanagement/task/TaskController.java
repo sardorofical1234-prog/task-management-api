@@ -1,6 +1,7 @@
 package uz.portfolio.taskmanagement.task;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +26,7 @@ import java.net.URI;
 @RestController
 @RequestMapping("/api/v1/tasks")
 @Tag(name = "Tasks", description = "Create, search and manage tasks")
+@SecurityRequirement(name = "bearerAuth")
 public class TaskController {
 
     private final TaskService taskService;

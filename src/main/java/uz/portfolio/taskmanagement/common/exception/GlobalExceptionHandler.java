@@ -3,11 +3,14 @@ package uz.portfolio.taskmanagement.common.exception;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import uz.portfolio.taskmanagement.auth.exception.EmailAlreadyRegisteredException;
+import uz.portfolio.taskmanagement.auth.exception.InvalidCredentialsException;
+import uz.portfolio.taskmanagement.auth.exception.InvalidPasswordException;
 import uz.portfolio.taskmanagement.task.exception.InvalidTaskQueryException;
 import uz.portfolio.taskmanagement.task.exception.TaskNotFoundException;
 
@@ -24,6 +27,37 @@ public class GlobalExceptionHandler {
         );
         problem.setTitle("Task not found");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
+    }
+
+    @ExceptionHandler(EmailAlreadyRegisteredException.class)
+    public ResponseEntity<ProblemDetail> handleEmailAlreadyRegistered(
+            EmailAlreadyRegisteredException exception
+    ) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.CONFLICT,
+                exception.getMessage()
+        );
+        problem.setTitle("Email already registered");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<ProblemDetail> handleInvalidCredentials(
+            InvalidCredentialsException exception
+    ) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNAUTHORIZED,
+                exception.getMessage()
+        );
+        problem.setTitle("Authentication failed");
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(problem);
+    }
+
+    @ExceptionHandler(InvalidPasswordException.class)
+    public ResponseEntity<ProblemDetail> handleInvalidPassword(
+            InvalidPasswordException exception
+    ) {
+        return badRequest(exception.getMessage());
     }
 
     @ExceptionHandler(InvalidTaskQueryException.class)
