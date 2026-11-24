@@ -16,7 +16,7 @@ public record PageResponse<T>(
 ) {
     public static <S, T> PageResponse<T> from(
             Page<S> source,
-            Function<? super S, ? extends T> mapper
+            Function<? super S, T> mapper
     ) {
         List<T> content = source.getContent().stream()
                 .map(mapper)
