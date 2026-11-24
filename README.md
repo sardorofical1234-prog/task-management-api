@@ -15,6 +15,7 @@ A portfolio REST API for managing tasks, built with Java 21 and Spring Boot 3.5.
 - OpenAPI documentation and Swagger UI
 - Unit and PostgreSQL integration tests with Testcontainers
 - Docker Compose and GitHub Actions CI
+- User persistence model and PostgreSQL migration (authentication implementation in progress)
 
 ## Tech stack
 
@@ -182,6 +183,6 @@ The credentials above are local-development defaults only. Do not use them in pr
 ## Planned milestones
 
 1. CRUD API, pagination, filtering, search, OpenAPI and PostgreSQL integration tests.
-2. User registration, Spring Security, JWT and role-based access control.
+2. User registration, Spring Security, JWT and role-based access control (in progress: user entity and database migration).
 3. Projects, task assignment, comments and authorization rules.
 4. Deployment, monitoring and observability.

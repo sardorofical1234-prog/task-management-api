@@ -20,6 +20,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import uz.portfolio.taskmanagement.task.dto.PageResponse;
 import uz.portfolio.taskmanagement.task.dto.TaskResponse;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskStatusRequest;
+import uz.portfolio.taskmanagement.user.User;
+import uz.portfolio.taskmanagement.user.UserRepository;
+import uz.portfolio.taskmanagement.user.UserRole;
 
 import java.util.Map;
 
@@ -46,9 +49,29 @@ class TaskApiIntegrationTest {
     @Autowired
     private TaskRepository taskRepository;
 
+    @Autowired
+    private UserRepository userRepository;
+
     @BeforeEach
     void cleanDatabase() {
         taskRepository.deleteAll();
+        userRepository.deleteAll();
+    }
+
+    @Test
+    void userRepository_shouldPersistUserWithDefaultRole() {
+        User user = userRepository.saveAndFlush(
+                new User("developer@example.com", "bcrypt-hash-placeholder")
+        );
+
+        assertThat(user.getId()).isNotNull();
+        assertThat(user.getRole()).isEqualTo(UserRole.USER);
+        assertThat(user.getCreatedAt()).isNotNull();
+        assertThat(userRepository.findByEmail("developer@example.com"))
+                .isPresent()
+                .get()
+                .extracting(User::getPasswordHash)
+                .isEqualTo("bcrypt-hash-placeholder");
     }
 
     @Test
