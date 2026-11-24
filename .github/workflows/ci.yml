@@ -27,3 +27,8 @@ jobs:
 
       - name: Build Docker image
         run: docker build --tag task-management-api:${{ github.sha }} .
+
+      - name: Validate Postman collection and environment JSON
+        run: |
+          python -m json.tool "postman/Task Management API.postman_collection.json" > /dev/null
+          python -m json.tool "postman/Local.postman_environment.json" > /dev/null

@@ -15,7 +15,8 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 - PostgreSQL, Flyway, OpenAPI / Swagger UI (disabled in production)
 - Actuator liveness/readiness probes with database connectivity checks
 - Unit and PostgreSQL integration tests with Testcontainers
-- Docker Compose, Render Blueprint and GitHub Actions CI
+- Docker Compose and GitHub Actions CI
+- Ready-to-import Postman collection for a complete local API demo
 
 ## Tech stack
 
@@ -60,29 +61,43 @@ Optional token lifetime:
 export JWT_ACCESS_TOKEN_TTL="PT15M"
 ~~~
 
-## Run the API and PostgreSQL
+## Free local portfolio demo
+
+No paid hosting, domain, cloud account or external database is required. Docker Compose starts the Spring Boot API and PostgreSQL on your computer.
 
 ~~~bash
 docker compose up --build
 ~~~
 
-API base URL: http://localhost:8080
+The first build downloads dependencies and creates the containers. When both services are healthy:
 
-Swagger UI: http://localhost:8080/swagger-ui.html
+- API: http://localhost:8080
+- Swagger UI: http://localhost:8080/swagger-ui.html
+- OpenAPI JSON: http://localhost:8080/v3/api-docs
+- Liveness: http://localhost:8080/actuator/health/liveness
+- Readiness: http://localhost:8080/actuator/health/readiness
 
-OpenAPI JSON: http://localhost:8080/v3/api-docs
+### Run the ready-made Postman demo
 
-Stop containers:
+1. Import `postman/Task Management API.postman_collection.json` into Postman.
+2. Import and select `postman/Local.postman_environment.json`.
+3. Run the collection requests from top to bottom.
+
+The collection registers a fresh demo user, logs in, stores the JWT automatically, creates a task and project, creates a project task, and adds/lists a comment. The demo password is for local testing only. Do not reuse it for a real account.
+
+Stop the containers:
 
 ~~~bash
 docker compose down
 ~~~
 
-Remove containers and the local database volume (deletes local database data):
+Reset the local database completely (this deletes the local demo data):
 
 ~~~bash
 docker compose down -v
 ~~~
+
+The database is stored in a Docker volume on your computer. It is not published to the internet.
 
 ## Run locally (database in Docker)
 
@@ -249,7 +264,7 @@ Application validation errors use Spring ProblemDetail. Spring Security handles 
 
 The `prod` Spring profile is designed for hosted environments:
 
-- Requires `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` and `JWT_SECRET_BASE64`. Render supplies the PostgreSQL connection URI through `DB_URL`; the Docker entrypoint adapts it to the JDBC URL format.
+- Requires `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` and `JWT_SECRET_BASE64`.
 - Does not fall back to the development JWT key. The application fails to start if the production secret is missing.
 - Disables Swagger UI and OpenAPI document endpoints.
 - Uses graceful shutdown, forwarded headers and conservative production error responses.
@@ -264,19 +279,9 @@ Health endpoints:
 
 The readiness endpoint is public for hosting-platform probes, but it returns status only. Other Actuator endpoints are not exposed.
 
-## Deploy to Render
+## Hosting is optional
 
-The root `render.yaml` is a Render Blueprint for the Docker-based API and PostgreSQL 17 in the Frankfurt region. It generates a JWT secret in Render and uses the readiness endpoint for deployment health checks. Automatic deployments are configured to wait for GitHub CI checks to pass.
-
-1. Push the repository to GitHub (already done for this project).
-2. In Render, choose **New → Blueprint**, connect this repository and select the `main` branch.
-3. Review the resources and environment variables in the Blueprint, then apply it.
-4. After deployment, open `https://<your-service>.onrender.com/actuator/health/readiness`. A healthy response contains `"status":"UP"`.
-5. Use `https://<your-service>.onrender.com/swagger-ui.html` only in local development; API docs are intentionally disabled in the production profile.
-
-**Important:** the Blueprint currently selects Render's Free plan for a portfolio demo. Free web services can spin down when idle, and Free PostgreSQL databases expire after 30 days. Upgrade the web service and database to paid plans before relying on it or storing data you need to keep. Render documents the Free-tier limitations in its [official guide](https://render.com/docs/free). In particular, the database must be upgraded before expiration; otherwise its data is eventually deleted.
-
-For a durable hosted environment, select a paid web-service plan and a paid PostgreSQL plan (for example, `basic-256mb`) in `render.yaml` before applying the Blueprint.
+This repository is intentionally prepared to be demonstrated locally at no hosting cost. The production profile and health probes are included as backend engineering practice; you do not need a hosted service to run the project, execute its tests or present the API. A public demo URL can be added later if it becomes necessary.
 
 ## Tests
 
@@ -293,7 +298,7 @@ The integration test uses a disposable PostgreSQL 17 container through Testconta
 | Variable | Default | Purpose |
 |---|---|---|
 | SERVER_PORT | 8080 | HTTP port |
-| DB_URL | jdbc:postgresql://localhost:5432/task_management | JDBC URL locally; Render Blueprint supplies a native PostgreSQL URI converted by the container entrypoint |
+| DB_URL | jdbc:postgresql://localhost:5432/task_management | JDBC URL override |
 | DB_USERNAME | task_user | Database username |
 | DB_PASSWORD | task_password | Database password |
 | JWT_SECRET_BASE64 | Development-only key | Base64 HMAC signing key; replace outside local development |
@@ -307,4 +312,4 @@ Database credentials and JWT fallback are local-development defaults only. Do no
 2. Registration, BCrypt, JWT authentication and USER / ADMIN authorization — complete.
 3. Task ownership — complete.
 4. Projects, project membership, task assignment and comments — complete (Java 21 CI passed; 18 tests).
-5. Production profile, Actuator health checks, Docker image CI and Render Blueprint — configured; live deployment still requires applying the Blueprint in a Render account.
+5. Local portfolio demo, production profile, health checks, Docker image CI and Postman collection — configured; no paid hosting required.
