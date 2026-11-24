@@ -15,7 +15,7 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 - PostgreSQL, Flyway, OpenAPI / Swagger UI (disabled in production)
 - Actuator liveness/readiness probes with database connectivity checks
 - Unit and PostgreSQL integration tests with Testcontainers
-- Docker Compose and GitHub Actions CI
+- Docker Compose runtime and GitHub Actions CI with end-to-end container smoke checks
 - Ready-to-import Postman collection for a complete local API demo
 
 ## Tech stack
@@ -107,13 +107,26 @@ export JWT_SECRET_BASE64="$(openssl rand -base64 48)"
 mvn spring-boot:run
 ~~~
 
+## Continuous integration
+
+Every push to `main` and pull request targeting `main` runs the GitHub Actions workflow:
+
+1. Run `mvn clean verify`, including the PostgreSQL integration tests with Testcontainers.
+2. Validate the Postman collection and environment JSON.
+3. Build the API container and start the API plus PostgreSQL using Docker Compose.
+4. Wait for `/actuator/health/readiness` to report `UP`, which includes a database connectivity check.
+5. Confirm Swagger UI is reachable and an unauthenticated request to `/api/v1/tasks` returns `401 Unauthorized`.
+6. Print container logs on failure and always stop the containers and remove the temporary CI database volume.
+
+This is a runtime smoke test, not a public deployment. It runs entirely on GitHub-hosted CI and requires no paid hosting account.
+
 ## Authentication API
 
 ### Register
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/auth/register \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
   -d '{"email":"developer@example.com","password":"Password123!"}'
 ~~~
 
@@ -122,8 +135,8 @@ A successful registration returns 201 Created and the default USER role. The pas
 ### Login
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/auth/login \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
   -d '{"email":"developer@example.com","password":"Password123!"}'
 ~~~
 
@@ -132,7 +145,7 @@ The response contains an accessToken, tokenType (Bearer) and expiresIn (seconds)
 Use the token in the Authorization header for all project and task endpoints:
 
 ~~~bash
-curl http://localhost:8080/api/v1/tasks \\
+curl http://localhost:8080/api/v1/tasks \
   -H "Authorization: Bearer <JWT>"
 ~~~
 
@@ -155,27 +168,27 @@ All project endpoints require a valid Bearer token.
 Create a project:
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/projects \\
-  -H 'Authorization: Bearer <JWT>' \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/projects \
+  -H 'Authorization: Bearer <JWT>' \
+  -H 'Content-Type: application/json' \
   -d '{"name":"Payments API","description":"Payment service development"}'
 ~~~
 
 Add an existing user to the project (use their database user ID):
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/projects/1/members \\
-  -H 'Authorization: Bearer <JWT>' \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/projects/1/members \
+  -H 'Authorization: Bearer <JWT>' \
+  -H 'Content-Type: application/json' \
   -d '{"userId":2}'
 ~~~
 
 Create a task inside a project:
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/projects/1/tasks \\
-  -H 'Authorization: Bearer <JWT>' \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/projects/1/tasks \
+  -H 'Authorization: Bearer <JWT>' \
+  -H 'Content-Type: application/json' \
   -d '{"title":"Implement payment endpoint","description":"Add payment API"}'
 ~~~
 
@@ -194,9 +207,9 @@ curl -i -X POST http://localhost:8080/api/v1/projects/1/tasks \\
 Task assignment (the caller must be the project owner or ADMIN; assignee must be the project owner or a project member):
 
 ~~~bash
-curl -i -X PATCH http://localhost:8080/api/v1/tasks/1/assignment \\
-  -H 'Authorization: Bearer <JWT>' \\
-  -H 'Content-Type: application/json' \\
+curl -i -X PATCH http://localhost:8080/api/v1/tasks/1/assignment \
+  -H 'Authorization: Bearer <JWT>' \
+  -H 'Content-Type: application/json' \
   -d '{"projectId":1,"assigneeId":2}'
 ~~~
 
@@ -232,9 +245,9 @@ Only users who can access a task can read or add its comments.
 Add a comment:
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/tasks/1/comments \\
-  -H 'Authorization: Bearer <JWT>' \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/tasks/1/comments \
+  -H 'Authorization: Bearer <JWT>' \
+  -H 'Content-Type: application/json' \
   -d '{"content":"I have started the implementation."}'
 ~~~
 
