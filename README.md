@@ -50,7 +50,7 @@ A USER can access tasks they created, tasks in projects where they are a member,
 
 See [the detailed architecture and ER diagram](docs/architecture.md).
 
-For a CV-ready project summary, a short interview pitch and a practical demo walkthrough, see the [portfolio presentation guide](docs/portfolio-guide.md).
+For a CV-ready project summary, a short interview pitch and a practical demo walkthrough, see the [portfolio presentation guide](docs/portfolio-guide.md). A copy-ready [GitHub profile README template](docs/github-profile-readme-template.md) is also included.
 
 ## Requirements
 
