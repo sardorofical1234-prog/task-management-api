@@ -5,13 +5,14 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 ## Features
 
 - User registration and JWT authentication
-- BCrypt password hashing; plain-text passwords are never stored
-- Stateless Spring Security and Bearer-token validation
+- BCrypt password hashing and stateless Spring Security
 - USER and ADMIN roles
 - Task CRUD, pagination, sorting, status filtering and title search
-- Task ownership: USER accounts can only access their own tasks
-- ADMIN accounts can read and manage tasks across users
-- PostgreSQL, Flyway migrations, OpenAPI / Swagger UI
+- Task ownership and project membership authorization
+- Projects with owner-controlled membership
+- Task creation inside projects and assignment to project members
+- Task comments with access checks
+- PostgreSQL, Flyway, OpenAPI / Swagger UI
 - Unit and PostgreSQL integration tests with Testcontainers
 - Docker Compose and GitHub Actions CI
 
@@ -25,9 +26,9 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 
 ## Architecture
 
-`HTTP Request -> Spring Security JWT Filter -> Controller -> Service -> Repository -> PostgreSQL`
+HTTP Request -> JWT Filter -> Controller -> Service -> Repository -> PostgreSQL
 
-The security filter validates a Bearer JWT before protected controller methods run. The task service scopes queries to the authenticated user unless that user has the ADMIN role.
+A USER can access their own tasks, tasks in projects where they are a member, and tasks assigned to them. Project owners manage project membership and assignment. ADMIN can access resources across users.
 
 See [docs/architecture.md](docs/architecture.md).
 
@@ -100,9 +101,7 @@ curl -i -X POST http://localhost:8080/api/v1/auth/register \\
   -d '{"email":"developer@example.com","password":"Password123!"}'
 ~~~
 
-A successful registration returns 201 Created, the profile and default USER role. The password is stored as a BCrypt hash. Clients cannot choose their own role during registration.
-
-Password rules: 8 to 72 characters; BCrypt's 72-byte input limit is also enforced. Email addresses are trimmed and normalized to lowercase.
+A successful registration returns 201 Created and the default USER role. The password is stored as a BCrypt hash. Clients cannot choose their own role during registration.
 
 ### Login
 
@@ -112,60 +111,80 @@ curl -i -X POST http://localhost:8080/api/v1/auth/login \\
   -d '{"email":"developer@example.com","password":"Password123!"}'
 ~~~
 
-A successful login returns:
+The response contains an accessToken, tokenType (Bearer) and expiresIn (seconds). Access tokens expire after 15 minutes by default.
 
-~~~json
-{
-  "accessToken": "<JWT>",
-  "tokenType": "Bearer",
-  "expiresIn": 900
-}
-~~~
-
-Access tokens expire after 15 minutes by default. Invalid credentials return 401 Unauthorized; duplicate registration returns 409 Conflict.
-
-### Call protected task endpoints
+Use the token in the Authorization header for all project and task endpoints:
 
 ~~~bash
 curl http://localhost:8080/api/v1/tasks \\
   -H "Authorization: Bearer <JWT>"
 ~~~
 
-All /api/v1/tasks/** endpoints require a valid token.
+## Projects API
 
-## Task ownership and roles
+All project endpoints require a valid Bearer token.
 
-- USER: can create tasks and list, view, update or delete only tasks whose owner is the authenticated account.
-- ADMIN: can list, view, update or delete tasks across all users.
-- Task ownership is derived from the verified JWT principal on the server. A request body cannot set or change the owner.
-- Public registration always assigns USER. ADMIN accounts must be provisioned by a trusted operator; there is deliberately no public role-escalation endpoint.
-- Existing tasks from before the ownership migration keep a NULL owner rather than being silently reassigned. They are visible only to ADMIN users until an operator migrates or removes them.
-
-## Task API endpoints
-
-Base URL: http://localhost:8080/api/v1/tasks
-
-| Method | Endpoint | Description | Success |
+| Method | Endpoint | Description | Access |
 |---|---|---|---|
-| POST | /api/v1/tasks | Create a task for the authenticated user | 201 Created |
-| GET | /api/v1/tasks | List own tasks (ADMIN: all tasks) | 200 OK |
-| GET | /api/v1/tasks/{id} | Get an accessible task | 200 OK |
-| PUT | /api/v1/tasks/{id} | Update an accessible task | 200 OK |
-| PATCH | /api/v1/tasks/{id}/status | Update an accessible task status | 200 OK |
-| DELETE | /api/v1/tasks/{id} | Delete an accessible task | 204 No Content |
+| POST | /api/v1/projects | Create a project | Authenticated user |
+| GET | /api/v1/projects | List accessible projects | Owner/member; ADMIN: all |
+| GET | /api/v1/projects/{projectId} | Get a project | Owner/member; ADMIN |
+| PUT | /api/v1/projects/{projectId} | Update project | Owner; ADMIN |
+| DELETE | /api/v1/projects/{projectId} | Delete project | Owner; ADMIN |
+| POST | /api/v1/projects/{projectId}/members | Add a member | Owner; ADMIN |
+| GET | /api/v1/projects/{projectId}/members | List members | Owner/member; ADMIN |
+| DELETE | /api/v1/projects/{projectId}/members/{userId} | Remove a member | Owner; ADMIN |
+| POST | /api/v1/projects/{projectId}/tasks | Create a task in a project | Owner/member; ADMIN |
 
-All task requests require Authorization: Bearer <JWT>.
-
-### Create a task
+Create a project:
 
 ~~~bash
-curl -i -X POST http://localhost:8080/api/v1/tasks \\
+curl -i -X POST http://localhost:8080/api/v1/projects \\
   -H 'Authorization: Bearer <JWT>' \\
   -H 'Content-Type: application/json' \\
-  -d '{"title":"Learn Spring Boot","description":"Build the first API endpoint"}'
+  -d '{"name":"Payments API","description":"Payment service development"}'
 ~~~
 
-### List, paginate, sort, filter and search
+Add an existing user to the project (use their database user ID):
+
+~~~bash
+curl -i -X POST http://localhost:8080/api/v1/projects/1/members \\
+  -H 'Authorization: Bearer <JWT>' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"userId":2}'
+~~~
+
+Create a task inside a project:
+
+~~~bash
+curl -i -X POST http://localhost:8080/api/v1/projects/1/tasks \\
+  -H 'Authorization: Bearer <JWT>' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"title":"Implement payment endpoint","description":"Add payment API"}'
+~~~
+
+## Task API
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | /api/v1/tasks | Create a standalone task |
+| GET | /api/v1/tasks | List tasks visible to the current user |
+| GET | /api/v1/tasks/{id} | Get an accessible task |
+| PUT | /api/v1/tasks/{id} | Update an accessible task |
+| PATCH | /api/v1/tasks/{id}/status | Update task status |
+| PATCH | /api/v1/tasks/{id}/assignment | Assign a task to a project member |
+| DELETE | /api/v1/tasks/{id} | Delete an accessible task |
+
+Task assignment (the caller must be the project owner or ADMIN; assignee must be the project owner or a project member):
+
+~~~bash
+curl -i -X PATCH http://localhost:8080/api/v1/tasks/1/assignment \\
+  -H 'Authorization: Bearer <JWT>' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"projectId":1,"assigneeId":2}'
+~~~
+
+List and filter tasks:
 
 ~~~http
 GET /api/v1/tasks?page=0&size=10&sortBy=createdAt&direction=desc&status=TODO&search=spring
@@ -183,14 +202,44 @@ Query parameters:
 | status | omitted | TODO, IN_PROGRESS or DONE |
 | search | omitted | Case-insensitive substring match in task title |
 
-The paginated response contains content, page, size, totalElements, totalPages, first and last.
+Task responses include projectId and assigneeId when the task belongs to a project or has an assignee.
 
-## Validation and error handling
+## Task comments API
+
+Only users who can access a task can read or add its comments.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | /api/v1/tasks/{taskId}/comments | Add a comment |
+| GET | /api/v1/tasks/{taskId}/comments | List comments in chronological order |
+
+Add a comment:
+
+~~~bash
+curl -i -X POST http://localhost:8080/api/v1/tasks/1/comments \\
+  -H 'Authorization: Bearer <JWT>' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"content":"I have started the implementation."}'
+~~~
+
+Comments are limited to 2,000 characters and include author identity and creation time.
+
+## Authorization rules
+
+- USER can create standalone tasks and access tasks they created, tasks in projects they own or belong to, and tasks assigned to them.
+- Project owners can update/delete their projects, add/remove members and assign tasks to project members.
+- Project members can view the project, list its members, create tasks inside it and collaborate through task comments.
+- ADMIN can access and manage projects and tasks across users.
+- Registration always creates USER accounts. There is no public role-escalation endpoint.
+- A task belonging to another unrelated user returns 404 to avoid disclosing resource existence.
+- Existing tasks without an owner (from before ownership was introduced) remain visible only to ADMIN until explicitly reconciled.
+
+## Validation and errors
 
 - Invalid request payload, pagination value or sort option: 400 Bad Request.
-- Invalid login credentials or missing / invalid JWT: 401 Unauthorized.
-- Duplicate email: 409 Conflict.
-- Unknown task ID or a task owned by another USER: 404 Not Found (the API does not reveal another user's resource).
+- Invalid login or missing/invalid JWT: 401 Unauthorized.
+- Duplicate email or duplicate project membership: 409 Conflict.
+- Unknown or inaccessible task/project: 404 Not Found.
 - Successful deletion: 204 No Content.
 
 Application validation errors use Spring ProblemDetail. Spring Security handles authentication failures.
@@ -203,7 +252,7 @@ Run unit and integration tests:
 mvn clean verify
 ~~~
 
-The integration test starts a disposable PostgreSQL 17 container through Testcontainers. Docker must be running locally. Tests cover registration, duplicate email, BCrypt, login, rejected credentials, JWT protection, user isolation, ADMIN access and the task API.
+The integration test uses a disposable PostgreSQL 17 container through Testcontainers. Docker must be running locally. It covers registration, BCrypt, JWT, task ownership, project membership, task assignment, comments and ADMIN access.
 
 ## Configuration
 
@@ -221,7 +270,7 @@ Database credentials and JWT fallback are local-development defaults only. Do no
 ## Planned milestones
 
 1. CRUD API, pagination, search, OpenAPI and PostgreSQL integration tests — complete.
-2. User persistence, registration, login, BCrypt and JWT authentication — complete.
-3. Task ownership and USER / ADMIN authorization — complete (Java 21 CI passed; 15 tests).
-4. Projects, task assignment and comments.
+2. Registration, BCrypt, JWT authentication and USER / ADMIN authorization — complete.
+3. Task ownership — complete.
+4. Projects, project membership, task assignment and comments — implemented; CI verification pending.
 5. Deployment, monitoring and observability.

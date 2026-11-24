@@ -18,8 +18,17 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import uz.portfolio.taskmanagement.comment.TaskCommentRepository;
+import uz.portfolio.taskmanagement.comment.dto.CommentResponse;
+import uz.portfolio.taskmanagement.comment.dto.CreateCommentRequest;
+import uz.portfolio.taskmanagement.project.ProjectMemberRepository;
+import uz.portfolio.taskmanagement.project.ProjectRepository;
+import uz.portfolio.taskmanagement.project.dto.AddProjectMemberRequest;
+import uz.portfolio.taskmanagement.project.dto.CreateProjectRequest;
+import uz.portfolio.taskmanagement.project.dto.ProjectResponse;
 import uz.portfolio.taskmanagement.task.dto.CreateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.PageResponse;
+import uz.portfolio.taskmanagement.task.dto.TaskAssignmentRequest;
 import uz.portfolio.taskmanagement.task.dto.TaskResponse;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskStatusRequest;
@@ -61,9 +70,21 @@ class TaskApiIntegrationTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private ProjectRepository projectRepository;
+
+    @Autowired
+    private ProjectMemberRepository projectMemberRepository;
+
+    @Autowired
+    private TaskCommentRepository commentRepository;
+
     @BeforeEach
     void cleanDatabase() {
+        commentRepository.deleteAll();
         taskRepository.deleteAll();
+        projectMemberRepository.deleteAll();
+        projectRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -361,6 +382,168 @@ class TaskApiIntegrationTest {
         assertThat(response.getBody()).contains("title");
     }
 
+
+    @Test
+    void projectOwner_shouldManageProjectAndMembersWhileMembersCanOnlyView() {
+        TestAccount owner = createAccount();
+        TestAccount member = createAccount();
+        TestAccount outsider = createAccount();
+        ProjectResponse project = createProject(owner, "Backend Portfolio");
+
+        addMember(owner, project.id(), member.user().getId());
+
+        ResponseEntity<ProjectResponse> memberRead = restTemplate.exchange(
+                "/api/v1/projects/{projectId}",
+                HttpMethod.GET,
+                new HttpEntity<>(member.headers()),
+                ProjectResponse.class,
+                project.id()
+        );
+        ResponseEntity<String> outsiderRead = restTemplate.exchange(
+                "/api/v1/projects/{projectId}",
+                HttpMethod.GET,
+                new HttpEntity<>(outsider.headers()),
+                String.class,
+                project.id()
+        );
+        ResponseEntity<String> memberUpdate = restTemplate.exchange(
+                "/api/v1/projects/{projectId}",
+                HttpMethod.PUT,
+                new HttpEntity<>(
+                        Map.of("name", "Unauthorized rename", "description", "Should be rejected"),
+                        member.headers()
+                ),
+                String.class,
+                project.id()
+        );
+
+        assertThat(memberRead.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(memberRead.getBody().name()).isEqualTo("Backend Portfolio");
+        assertThat(outsiderRead.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(memberUpdate.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        ResponseEntity<String> memberList = restTemplate.exchange(
+                "/api/v1/projects",
+                HttpMethod.GET,
+                new HttpEntity<>(member.headers()),
+                String.class
+        );
+        assertThat(memberList.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(memberList.getBody()).contains("Backend Portfolio");
+    }
+
+    @Test
+    void projectOwner_shouldAssignTaskToProjectMemberAndAssigneeCanAccessIt() {
+        TestAccount owner = createAccount();
+        TestAccount member = createAccount();
+        TestAccount outsider = createAccount();
+        ProjectResponse project = createProject(owner, "Payment Service");
+        addMember(owner, project.id(), member.user().getId());
+
+        ResponseEntity<TaskResponse> createResponse = restTemplate.postForEntity(
+                "/api/v1/projects/{projectId}/tasks",
+                new HttpEntity<>(
+                        new CreateTaskRequest("Implement payment API", "Create payment endpoints"),
+                        member.headers()
+                ),
+                TaskResponse.class,
+                project.id()
+        );
+
+        assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        TaskResponse createdTask = createResponse.getBody();
+        assertThat(createdTask.projectId()).isEqualTo(project.id());
+
+        ResponseEntity<TaskResponse> assignmentResponse = restTemplate.exchange(
+                "/api/v1/tasks/{taskId}/assignment",
+                HttpMethod.PATCH,
+                new HttpEntity<>(
+                        new TaskAssignmentRequest(project.id(), member.user().getId()),
+                        owner.headers()
+                ),
+                TaskResponse.class,
+                createdTask.id()
+        );
+
+        assertThat(assignmentResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(assignmentResponse.getBody().assigneeId()).isEqualTo(member.user().getId());
+
+        ResponseEntity<TaskResponse> assigneeRead = restTemplate.exchange(
+                "/api/v1/tasks/{taskId}",
+                HttpMethod.GET,
+                new HttpEntity<>(member.headers()),
+                TaskResponse.class,
+                createdTask.id()
+        );
+        ResponseEntity<String> outsiderRead = restTemplate.exchange(
+                "/api/v1/tasks/{taskId}",
+                HttpMethod.GET,
+                new HttpEntity<>(outsider.headers()),
+                String.class,
+                createdTask.id()
+        );
+
+        assertThat(assigneeRead.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(outsiderRead.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        ResponseEntity<String> invalidAssignment = restTemplate.exchange(
+                "/api/v1/tasks/{taskId}/assignment",
+                HttpMethod.PATCH,
+                new HttpEntity<>(
+                        new TaskAssignmentRequest(project.id(), outsider.user().getId()),
+                        owner.headers()
+                ),
+                String.class,
+                createdTask.id()
+        );
+        assertThat(invalidAssignment.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void projectMember_shouldCommentOnTaskAndUnrelatedUserCannotReadComments() {
+        TestAccount owner = createAccount();
+        TestAccount member = createAccount();
+        TestAccount outsider = createAccount();
+        ProjectResponse project = createProject(owner, "User Service");
+        addMember(owner, project.id(), member.user().getId());
+
+        TaskResponse task = createTaskInProject(owner, project.id(), "Add user endpoint", "Create profile API");
+
+        ResponseEntity<CommentResponse> commentResponse = restTemplate.postForEntity(
+                "/api/v1/tasks/{taskId}/comments",
+                new HttpEntity<>(
+                        new CreateCommentRequest("I have started the implementation."),
+                        member.headers()
+                ),
+                CommentResponse.class,
+                task.id()
+        );
+
+        assertThat(commentResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(commentResponse.getBody().authorEmail()).isEqualTo(member.user().getEmail());
+
+        ResponseEntity<CommentResponse[]> ownerComments = restTemplate.exchange(
+                "/api/v1/tasks/{taskId}/comments",
+                HttpMethod.GET,
+                new HttpEntity<>(owner.headers()),
+                CommentResponse[].class,
+                task.id()
+        );
+        ResponseEntity<String> outsiderComments = restTemplate.exchange(
+                "/api/v1/tasks/{taskId}/comments",
+                HttpMethod.GET,
+                new HttpEntity<>(outsider.headers()),
+                String.class,
+                task.id()
+        );
+
+        assertThat(ownerComments.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(ownerComments.getBody()).hasSize(1);
+        assertThat(ownerComments.getBody()[0].content())
+                .isEqualTo("I have started the implementation.");
+        assertThat(outsiderComments.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
     private ResponseEntity<Map> register(String email, String password) {
         return restTemplate.postForEntity(
                 "/api/v1/auth/register",
@@ -406,6 +589,49 @@ class TaskApiIntegrationTest {
                 "/api/v1/tasks",
                 new HttpEntity<>(new CreateTaskRequest(title, description), account.headers()),
                 TaskResponse.class
+        );
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return response.getBody();
+    }
+
+
+    private ProjectResponse createProject(TestAccount owner, String name) {
+        ResponseEntity<ProjectResponse> response = restTemplate.postForEntity(
+                "/api/v1/projects",
+                new HttpEntity<>(
+                        new CreateProjectRequest(name, "Integration test project"),
+                        owner.headers()
+                ),
+                ProjectResponse.class
+        );
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return response.getBody();
+    }
+
+    private void addMember(TestAccount owner, Long projectId, Long userId) {
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/v1/projects/{projectId}/members",
+                new HttpEntity<>(new AddProjectMemberRequest(userId), owner.headers()),
+                String.class,
+                projectId
+        );
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+    }
+
+    private TaskResponse createTaskInProject(
+            TestAccount creator,
+            Long projectId,
+            String title,
+            String description
+    ) {
+        ResponseEntity<TaskResponse> response = restTemplate.postForEntity(
+                "/api/v1/projects/{projectId}/tasks",
+                new HttpEntity<>(
+                        new CreateTaskRequest(title, description),
+                        creator.headers()
+                ),
+                TaskResponse.class,
+                projectId
         );
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return response.getBody();

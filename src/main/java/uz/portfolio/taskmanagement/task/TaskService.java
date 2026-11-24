@@ -1,23 +1,31 @@
 package uz.portfolio.taskmanagement.task;
 
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import uz.portfolio.taskmanagement.auth.security.CurrentUserService;
+import uz.portfolio.taskmanagement.project.Project;
+import uz.portfolio.taskmanagement.project.ProjectMember;
+import uz.portfolio.taskmanagement.project.ProjectMemberRepository;
+import uz.portfolio.taskmanagement.project.ProjectService;
 import uz.portfolio.taskmanagement.task.dto.CreateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.PageResponse;
+import uz.portfolio.taskmanagement.task.dto.TaskAssignmentRequest;
 import uz.portfolio.taskmanagement.task.dto.TaskResponse;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskRequest;
 import uz.portfolio.taskmanagement.task.exception.InvalidTaskQueryException;
 import uz.portfolio.taskmanagement.task.exception.TaskNotFoundException;
 import uz.portfolio.taskmanagement.user.User;
 import uz.portfolio.taskmanagement.user.UserRepository;
+import uz.portfolio.taskmanagement.user.exception.UserNotFoundException;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -33,16 +41,36 @@ public class TaskService {
 
     private final TaskRepository taskRepository;
     private final UserRepository userRepository;
+    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectService projectService;
+    private final CurrentUserService currentUserService;
 
-    public TaskService(TaskRepository taskRepository, UserRepository userRepository) {
+    public TaskService(
+            TaskRepository taskRepository,
+            UserRepository userRepository,
+            ProjectMemberRepository projectMemberRepository,
+            ProjectService projectService,
+            CurrentUserService currentUserService
+    ) {
         this.taskRepository = taskRepository;
         this.userRepository = userRepository;
+        this.projectMemberRepository = projectMemberRepository;
+        this.projectService = projectService;
+        this.currentUserService = currentUserService;
     }
 
     @Transactional
     public TaskResponse create(CreateTaskRequest request) {
-        User owner = getCurrentUser();
-        Task task = new Task(request.title().trim(), request.description(), owner);
+        User creator = currentUserService.getCurrentUser();
+        Task task = new Task(request.title().trim(), request.description(), creator);
+        return TaskResponse.from(taskRepository.save(task));
+    }
+
+    @Transactional
+    public TaskResponse createInProject(Long projectId, CreateTaskRequest request) {
+        Project project = projectService.getAccessibleProject(projectId);
+        User creator = currentUserService.getCurrentUser();
+        Task task = new Task(request.title().trim(), request.description(), creator, project);
         return TaskResponse.from(taskRepository.save(task));
     }
 
@@ -73,9 +101,8 @@ public class TaskService {
             throw new InvalidTaskQueryException("direction must be either 'asc' or 'desc'");
         }
 
-        boolean admin = isAdmin();
-        Long ownerId = admin ? null : getCurrentUser().getId();
-
+        boolean admin = currentUserService.isAdmin();
+        User currentUser = admin ? null : currentUserService.getCurrentUser();
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sortBy));
         String normalizedSearch = search == null || search.isBlank()
                 ? null
@@ -84,10 +111,27 @@ public class TaskService {
         Specification<Task> specification = (root, query, criteriaBuilder) -> {
             var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
 
-            // Non-admin users are always scoped to their own records at database level.
             if (!admin) {
-                predicates.add(criteriaBuilder.equal(root.get("owner").get("id"), ownerId));
+                Join<Task, User> creator = root.join("owner", JoinType.LEFT);
+                Join<Task, User> assignee = root.join("assignedTo", JoinType.LEFT);
+                Join<Task, Project> project = root.join("project", JoinType.LEFT);
+                Join<Project, User> projectOwner = project.join("owner", JoinType.LEFT);
+
+                Subquery<Long> membershipQuery = query.subquery(Long.class);
+                Root<ProjectMember> membership = membershipQuery.from(ProjectMember.class);
+                membershipQuery.select(membership.get("id")).where(
+                        criteriaBuilder.equal(membership.get("project").get("id"), project.get("id")),
+                        criteriaBuilder.equal(membership.get("user").get("id"), currentUser.getId())
+                );
+
+                predicates.add(criteriaBuilder.or(
+                        criteriaBuilder.equal(creator.get("id"), currentUser.getId()),
+                        criteriaBuilder.equal(assignee.get("id"), currentUser.getId()),
+                        criteriaBuilder.equal(projectOwner.get("id"), currentUser.getId()),
+                        criteriaBuilder.exists(membershipQuery)
+                ));
             }
+
             if (status != null) {
                 predicates.add(criteriaBuilder.equal(root.get("status"), status));
             }
@@ -108,53 +152,75 @@ public class TaskService {
     }
 
     public TaskResponse findById(Long id) {
-        return TaskResponse.from(getAccessibleTaskOrThrow(id));
+        return TaskResponse.from(getAccessibleTask(id));
     }
 
     @Transactional
     public TaskResponse update(Long id, UpdateTaskRequest request) {
-        Task task = getAccessibleTaskOrThrow(id);
+        Task task = getAccessibleTask(id);
         task.update(request.title().trim(), request.description(), request.status());
         return TaskResponse.from(taskRepository.save(task));
     }
 
     @Transactional
     public TaskResponse updateStatus(Long id, TaskStatus status) {
-        Task task = getAccessibleTaskOrThrow(id);
+        Task task = getAccessibleTask(id);
         task.update(task.getTitle(), task.getDescription(), status);
         return TaskResponse.from(taskRepository.save(task));
     }
 
     @Transactional
+    public TaskResponse assign(Long taskId, TaskAssignmentRequest request) {
+        Task task = getAccessibleTask(taskId);
+        Project project = projectService.getManageableProject(request.projectId());
+
+        if (task.getProject() != null
+                && !currentUserService.isAdmin()
+                && !task.getProject().getOwner().getId().equals(currentUserService.getCurrentUser().getId())) {
+            throw new TaskNotFoundException(taskId);
+        }
+
+        User assignee = userRepository.findById(request.assigneeId())
+                .orElseThrow(() -> new UserNotFoundException(request.assigneeId()));
+
+        if (!projectService.isOwnerOrMember(project, assignee)) {
+            throw new InvalidTaskQueryException("The assignee must be the project owner or a project member");
+        }
+
+        task.assign(project, assignee);
+        return TaskResponse.from(taskRepository.save(task));
+    }
+
+    @Transactional
     public void delete(Long id) {
-        taskRepository.delete(getAccessibleTaskOrThrow(id));
+        taskRepository.delete(getAccessibleTask(id));
     }
 
-    private Task getAccessibleTaskOrThrow(Long id) {
-        if (isAdmin()) {
-            return taskRepository.findById(id)
-                    .orElseThrow(() -> new TaskNotFoundException(id));
-        }
-
-        User currentUser = getCurrentUser();
-        return taskRepository.findOwnedTaskById(id, currentUser.getId())
+    public Task getAccessibleTask(Long id) {
+        Task task = taskRepository.findById(id)
                 .orElseThrow(() -> new TaskNotFoundException(id));
-    }
 
-    private User getCurrentUser() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()) {
-            throw new IllegalStateException("An authenticated user is required");
+        if (currentUserService.isAdmin()) {
+            return task;
         }
 
-        return userRepository.findByEmail(authentication.getName())
-                .orElseThrow(() -> new IllegalStateException("Authenticated user no longer exists"));
-    }
+        User currentUser = currentUserService.getCurrentUser();
+        boolean createdByUser = task.getOwner() != null
+                && task.getOwner().getId().equals(currentUser.getId());
+        boolean assignedToUser = task.getAssignedTo() != null
+                && task.getAssignedTo().getId().equals(currentUser.getId());
+        boolean projectOwner = task.getProject() != null
+                && task.getProject().getOwner().getId().equals(currentUser.getId());
+        boolean projectMember = task.getProject() != null
+                && projectMemberRepository.existsByProjectIdAndUserId(
+                        task.getProject().getId(),
+                        currentUser.getId()
+                );
 
-    private boolean isAdmin() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        return authentication != null && authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .anyMatch("ROLE_ADMIN"::equals);
+        if (createdByUser || assignedToUser || projectOwner || projectMember) {
+            return task;
+        }
+
+        throw new TaskNotFoundException(id);
     }
 }

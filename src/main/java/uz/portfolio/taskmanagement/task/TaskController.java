@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import uz.portfolio.taskmanagement.task.dto.CreateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.PageResponse;
+import uz.portfolio.taskmanagement.task.dto.TaskAssignmentRequest;
 import uz.portfolio.taskmanagement.task.dto.TaskResponse;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskStatusRequest;
@@ -25,7 +26,7 @@ import java.net.URI;
 
 @RestController
 @RequestMapping("/api/v1/tasks")
-@Tag(name = "Tasks", description = "Create, search and manage tasks")
+@Tag(name = "Tasks", description = "Create, search, assign and manage tasks")
 @SecurityRequirement(name = "bearerAuth")
 public class TaskController {
 
@@ -36,7 +37,7 @@ public class TaskController {
     }
 
     @PostMapping
-    @Operation(summary = "Create a task")
+    @Operation(summary = "Create a standalone task")
     public ResponseEntity<TaskResponse> create(@Valid @RequestBody CreateTaskRequest request) {
         TaskResponse created = taskService.create(request);
         URI location = URI.create("/api/v1/tasks/" + created.id());
@@ -44,7 +45,7 @@ public class TaskController {
     }
 
     @GetMapping
-    @Operation(summary = "Get tasks with pagination, sorting and filtering")
+    @Operation(summary = "Get tasks accessible to the current user")
     public PageResponse<TaskResponse> findAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
@@ -78,6 +79,15 @@ public class TaskController {
             @Valid @RequestBody UpdateTaskStatusRequest request
     ) {
         return taskService.updateStatus(id, request.status());
+    }
+
+    @PatchMapping("/{id}/assignment")
+    @Operation(summary = "Assign a task to a project member (project owner or ADMIN)")
+    public TaskResponse assign(
+            @PathVariable Long id,
+            @Valid @RequestBody TaskAssignmentRequest request
+    ) {
+        return taskService.assign(id, request);
     }
 
     @DeleteMapping("/{id}")

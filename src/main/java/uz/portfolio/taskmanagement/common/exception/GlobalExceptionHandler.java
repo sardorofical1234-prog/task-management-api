@@ -11,21 +11,31 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import uz.portfolio.taskmanagement.auth.exception.EmailAlreadyRegisteredException;
 import uz.portfolio.taskmanagement.auth.exception.InvalidCredentialsException;
 import uz.portfolio.taskmanagement.auth.exception.InvalidPasswordException;
+import uz.portfolio.taskmanagement.project.exception.ProjectMemberAlreadyExistsException;
+import uz.portfolio.taskmanagement.project.exception.ProjectMemberNotFoundException;
+import uz.portfolio.taskmanagement.project.exception.ProjectNotFoundException;
+import uz.portfolio.taskmanagement.project.exception.ProjectOwnerRemovalException;
 import uz.portfolio.taskmanagement.task.exception.InvalidTaskQueryException;
 import uz.portfolio.taskmanagement.task.exception.TaskNotFoundException;
+import uz.portfolio.taskmanagement.user.exception.UserNotFoundException;
 
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(TaskNotFoundException.class)
-    public ResponseEntity<ProblemDetail> handleTaskNotFound(TaskNotFoundException exception) {
+    @ExceptionHandler({
+            TaskNotFoundException.class,
+            ProjectNotFoundException.class,
+            ProjectMemberNotFoundException.class,
+            UserNotFoundException.class
+    })
+    public ResponseEntity<ProblemDetail> handleNotFound(RuntimeException exception) {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(
                 HttpStatus.NOT_FOUND,
                 exception.getMessage()
         );
-        problem.setTitle("Task not found");
+        problem.setTitle("Resource not found");
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(problem);
     }
 
@@ -33,12 +43,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ProblemDetail> handleEmailAlreadyRegistered(
             EmailAlreadyRegisteredException exception
     ) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT,
-                exception.getMessage()
-        );
-        problem.setTitle("Email already registered");
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+        return conflict(exception.getMessage());
+    }
+
+    @ExceptionHandler(ProjectMemberAlreadyExistsException.class)
+    public ResponseEntity<ProblemDetail> handleProjectMemberAlreadyExists(
+            ProjectMemberAlreadyExistsException exception
+    ) {
+        return conflict(exception.getMessage());
     }
 
     @ExceptionHandler(InvalidCredentialsException.class)
@@ -56,6 +68,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidPasswordException.class)
     public ResponseEntity<ProblemDetail> handleInvalidPassword(
             InvalidPasswordException exception
+    ) {
+        return badRequest(exception.getMessage());
+    }
+
+    @ExceptionHandler(ProjectOwnerRemovalException.class)
+    public ResponseEntity<ProblemDetail> handleProjectOwnerRemoval(
+            ProjectOwnerRemovalException exception
     ) {
         return badRequest(exception.getMessage());
     }
@@ -90,6 +109,12 @@ public class GlobalExceptionHandler {
                 .map(error -> error.getField() + ": " + error.getDefaultMessage())
                 .collect(Collectors.joining("; "));
         return badRequest(details);
+    }
+
+    private ResponseEntity<ProblemDetail> conflict(String detail) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, detail);
+        problem.setTitle("Conflict");
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
     }
 
     private ResponseEntity<ProblemDetail> badRequest(String detail) {
