@@ -66,7 +66,8 @@
             "exec": [
               "pm.test('User registered', () => pm.response.to.have.status(201));",
               "const body = pm.response.json();",
-              "pm.expect(body.email).to.eql(pm.collectionVariables.get('demoEmail'));"
+              "pm.expect(body.email).to.eql(pm.collectionVariables.get('demoEmail'));",
+              "pm.expect(pm.response.json().id).to.exist;"
             ]
           }
         }
@@ -106,7 +107,9 @@
               "pm.test('Login successful', () => pm.response.to.have.status(200));",
               "const body = pm.response.json();",
               "pm.expect(body.accessToken).to.be.a('string').and.not.empty;",
-              "pm.collectionVariables.set('accessToken', body.accessToken);"
+              "pm.collectionVariables.set('accessToken', body.accessToken);",
+              "pm.expect(body.tokenType).to.eql('Bearer');",
+              "pm.expect(body.expiresIn).to.be.above(0);"
             ]
           }
         }
@@ -146,7 +149,8 @@
               "pm.test('Task created', () => pm.response.to.have.status(201));",
               "const body = pm.response.json();",
               "pm.expect(body.id).to.exist;",
-              "pm.collectionVariables.set('taskId', String(body.id));"
+              "pm.collectionVariables.set('taskId', String(body.id));",
+              "pm.expect(body.title).to.eql('Prepare portfolio demo');"
             ]
           }
         }
@@ -174,7 +178,21 @@
     },
     {
       "name": "4. List my tasks",
-      "event": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Task list request succeeds', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "pm.expect(body.content).to.be.an('array');",
+              "pm.expect(body.page).to.eql(0);",
+              "pm.expect(body.content.some(task => String(task.id) === pm.collectionVariables.get('taskId'))).to.eql(true);"
+            ]
+          }
+        }
+      ],
       "request": {
         "method": "GET",
         "header": [],
@@ -191,7 +209,8 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('Task status updated', () => pm.response.to.have.status(200));",
-              "pm.expect(pm.response.json().status).to.eql('IN_PROGRESS');"
+              "pm.expect(pm.response.json().status).to.eql('IN_PROGRESS');",
+              "pm.expect(pm.response.json().id).to.eql(Number(pm.collectionVariables.get('taskId')));"
             ]
           }
         }
@@ -228,7 +247,8 @@
               "pm.test('Project created', () => pm.response.to.have.status(201));",
               "const body = pm.response.json();",
               "pm.expect(body.id).to.exist;",
-              "pm.collectionVariables.set('projectId', String(body.id));"
+              "pm.collectionVariables.set('projectId', String(body.id));",
+              "pm.expect(body.name).to.eql('Portfolio Demo Project');"
             ]
           }
         }
@@ -265,7 +285,9 @@
               "pm.test('Project task created', () => pm.response.to.have.status(201));",
               "const body = pm.response.json();",
               "pm.expect(body.id).to.exist;",
-              "pm.collectionVariables.set('projectTaskId', String(body.id));"
+              "pm.collectionVariables.set('projectTaskId', String(body.id));",
+              "pm.expect(body.projectId).to.eql(Number(pm.collectionVariables.get('projectId')));",
+              "pm.expect(body.title).to.eql('Build project collaboration demo');"
             ]
           }
         }
@@ -300,7 +322,8 @@
             "type": "text/javascript",
             "exec": [
               "pm.test('Comment created', () => pm.response.to.have.status(201));",
-              "pm.expect(pm.response.json().content).to.eql('The project task and comment flow are working.');"
+              "pm.expect(pm.response.json().content).to.eql('The project task and comment flow are working.');",
+              "pm.expect(pm.response.json().taskId).to.eql(Number(pm.collectionVariables.get('projectTaskId')));"
             ]
           }
         }
@@ -334,7 +357,10 @@
           "script": {
             "type": "text/javascript",
             "exec": [
-              "pm.test('Comments listed', () => pm.response.to.have.status(200));"
+              "pm.test('Comments listed', () => pm.response.to.have.status(200));",
+              "const comments = pm.response.json();",
+              "pm.expect(comments).to.be.an('array');",
+              "pm.expect(comments.some(comment => comment.content === 'The project task and comment flow are working.')).to.eql(true);"
             ]
           }
         }
