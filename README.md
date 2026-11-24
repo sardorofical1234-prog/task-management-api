@@ -222,6 +222,6 @@ Database credentials and JWT fallback are local-development defaults only. Do no
 
 1. CRUD API, pagination, search, OpenAPI and PostgreSQL integration tests — complete.
 2. User persistence, registration, login, BCrypt and JWT authentication — complete.
-3. Task ownership and USER / ADMIN authorization — implemented; CI verification pending.
+3. Task ownership and USER / ADMIN authorization — complete (Java 21 CI passed; 15 tests).
 4. Projects, task assignment and comments.
 5. Deployment, monitoring and observability.
