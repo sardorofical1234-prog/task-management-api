@@ -9,6 +9,8 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 RUN groupadd --system spring && useradd --system --gid spring spring
 COPY --from=build /workspace/target/task-management-api-0.0.1-SNAPSHOT.jar app.jar
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod 0555 /app/docker-entrypoint.sh
 USER spring:spring
 EXPOSE 8080
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
