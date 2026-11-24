@@ -18,8 +18,10 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import uz.portfolio.taskmanagement.task.dto.CreateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.PageResponse;
 import uz.portfolio.taskmanagement.task.dto.TaskResponse;
+import uz.portfolio.taskmanagement.task.dto.UpdateTaskRequest;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskStatusRequest;
 import uz.portfolio.taskmanagement.user.User;
 import uz.portfolio.taskmanagement.user.UserRepository;
@@ -84,7 +86,6 @@ class TaskApiIntegrationTest {
     @Test
     void register_shouldStoreBcryptHashAndDefaultUserRole() {
         String email = uniqueEmail();
-
         ResponseEntity<Map> response = register(email, TEST_PASSWORD);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
@@ -118,9 +119,8 @@ class TaskApiIntegrationTest {
         assertThat(loginResponse.getBody().get("accessToken")).isInstanceOf(String.class);
         assertThat(loginResponse.getBody().get("expiresIn")).isEqualTo(900);
 
-        String token = (String) loginResponse.getBody().get("accessToken");
         HttpHeaders headers = jsonHeaders();
-        headers.setBearerAuth(token);
+        headers.setBearerAuth((String) loginResponse.getBody().get("accessToken"));
 
         ResponseEntity<String> tasksResponse = restTemplate.exchange(
                 "/api/v1/tasks",
@@ -152,22 +152,122 @@ class TaskApiIntegrationTest {
     }
 
     @Test
-    void findAll_shouldFilterSortAndPaginateTasks() {
-        taskRepository.save(new Task("Design API", "Define REST endpoints"));
-        taskRepository.save(new Task("Design UI", "Prepare wireframes"));
+    void user_shouldOnlyListOwnTasks() {
+        TestAccount alice = createAccount();
+        TestAccount bob = createAccount();
 
-        Task completedTask = new Task("Design backend", "Implement persistence");
+        createTask(alice, "Alice private task", "Only Alice should see this");
+        createTask(bob, "Bob private task", "Only Bob should see this");
+
+        ResponseEntity<PageResponse<TaskResponse>> response = restTemplate.exchange(
+                "/api/v1/tasks",
+                HttpMethod.GET,
+                new HttpEntity<>(alice.headers()),
+                new ParameterizedTypeReference<>() {
+                }
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().content())
+                .extracting(TaskResponse::title)
+                .containsExactly("Alice private task");
+        assertThat(response.getBody().totalElements()).isEqualTo(1);
+    }
+
+    @Test
+    void user_shouldNotReadUpdateOrDeleteAnotherUsersTask() {
+        TestAccount alice = createAccount();
+        TestAccount bob = createAccount();
+        TaskResponse alicesTask = createTask(alice, "Private task", "Alice's task");
+
+        ResponseEntity<String> readResponse = restTemplate.exchange(
+                "/api/v1/tasks/{id}",
+                HttpMethod.GET,
+                new HttpEntity<>(bob.headers()),
+                String.class,
+                alicesTask.id()
+        );
+        ResponseEntity<String> updateResponse = restTemplate.exchange(
+                "/api/v1/tasks/{id}",
+                HttpMethod.PUT,
+                new HttpEntity<>(
+                        new UpdateTaskRequest("Hijacked task", "Changed by Bob", TaskStatus.DONE),
+                        bob.headers()
+                ),
+                String.class,
+                alicesTask.id()
+        );
+        ResponseEntity<String> deleteResponse = restTemplate.exchange(
+                "/api/v1/tasks/{id}",
+                HttpMethod.DELETE,
+                new HttpEntity<>(bob.headers()),
+                String.class,
+                alicesTask.id()
+        );
+
+        assertThat(readResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(deleteResponse.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+
+        Task persistedTask = taskRepository.findById(alicesTask.id()).orElseThrow();
+        assertThat(persistedTask.getTitle()).isEqualTo("Private task");
+        assertThat(persistedTask.getOwner().getId()).isEqualTo(alice.user().getId());
+    }
+
+    @Test
+    void admin_shouldReadAndUpdateAnotherUsersTask() {
+        TestAccount alice = createAccount();
+        TestAccount admin = createAdminAccount();
+        TaskResponse alicesTask = createTask(alice, "Alice task", "Created by Alice");
+
+        ResponseEntity<TaskResponse> readResponse = restTemplate.exchange(
+                "/api/v1/tasks/{id}",
+                HttpMethod.GET,
+                new HttpEntity<>(admin.headers()),
+                TaskResponse.class,
+                alicesTask.id()
+        );
+        ResponseEntity<TaskResponse> updateResponse = restTemplate.exchange(
+                "/api/v1/tasks/{id}",
+                HttpMethod.PUT,
+                new HttpEntity<>(
+                        new UpdateTaskRequest("Admin updated task", "Updated by admin", TaskStatus.DONE),
+                        admin.headers()
+                ),
+                TaskResponse.class,
+                alicesTask.id()
+        );
+
+        assertThat(readResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(readResponse.getBody().title()).isEqualTo("Alice task");
+        assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(updateResponse.getBody().title()).isEqualTo("Admin updated task");
+        assertThat(taskRepository.findById(alicesTask.id()).orElseThrow().getOwner().getId())
+                .isEqualTo(alice.user().getId());
+    }
+
+    @Test
+    void findAll_shouldFilterSortAndPaginateTasksForCurrentUser() {
+        TestAccount account = createAccount();
+        TestAccount anotherUser = createAccount();
+
+        taskRepository.save(new Task("Design API", "Define REST endpoints", account.user()));
+        taskRepository.save(new Task("Design UI", "Prepare wireframes", account.user()));
+
+        Task completedTask = new Task("Design backend", "Implement persistence", account.user());
         completedTask.update(
                 completedTask.getTitle(),
                 completedTask.getDescription(),
                 TaskStatus.DONE
         );
         taskRepository.save(completedTask);
+        taskRepository.save(new Task("Design secret", "Belongs to another user", anotherUser.user()));
 
         ResponseEntity<PageResponse<TaskResponse>> response = restTemplate.exchange(
                 "/api/v1/tasks?page=0&size=1&sortBy=title&direction=asc&status=TODO&search=design",
                 HttpMethod.GET,
-                new HttpEntity<>(authenticatedHeaders()),
+                new HttpEntity<>(account.headers()),
                 new ParameterizedTypeReference<>() {
                 }
         );
@@ -186,20 +286,42 @@ class TaskApiIntegrationTest {
     }
 
     @Test
-    void updateStatus_shouldChangeOnlyTheTaskStatus() {
-        Task task = taskRepository.saveAndFlush(
-                new Task("Prepare documentation", "Write API usage guide")
+    void admin_shouldListTasksFromAllUsers() {
+        TestAccount alice = createAccount();
+        TestAccount bob = createAccount();
+        TestAccount admin = createAdminAccount();
+        createTask(alice, "Alice task", "Alice");
+        createTask(bob, "Bob task", "Bob");
+
+        ResponseEntity<PageResponse<TaskResponse>> response = restTemplate.exchange(
+                "/api/v1/tasks",
+                HttpMethod.GET,
+                new HttpEntity<>(admin.headers()),
+                new ParameterizedTypeReference<>() {
+                }
         );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().content())
+                .extracting(TaskResponse::title)
+                .containsExactlyInAnyOrder("Alice task", "Bob task");
+    }
+
+    @Test
+    void updateStatus_shouldChangeOnlyTheTaskStatus() {
+        TestAccount account = createAccount();
+        TaskResponse created = createTask(account, "Prepare documentation", "Write API usage guide");
 
         ResponseEntity<TaskResponse> response = restTemplate.exchange(
                 "/api/v1/tasks/{id}/status",
                 HttpMethod.PATCH,
                 new HttpEntity<>(
                         new UpdateTaskStatusRequest(TaskStatus.IN_PROGRESS),
-                        authenticatedHeaders()
+                        account.headers()
                 ),
                 TaskResponse.class,
-                task.getId()
+                created.id()
         );
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -211,10 +333,11 @@ class TaskApiIntegrationTest {
 
     @Test
     void findAll_shouldRejectUnsupportedSortField() {
+        TestAccount account = createAccount();
         ResponseEntity<String> response = restTemplate.exchange(
                 "/api/v1/tasks?sortBy=password",
                 HttpMethod.GET,
-                new HttpEntity<>(authenticatedHeaders()),
+                new HttpEntity<>(account.headers()),
                 String.class
         );
 
@@ -224,11 +347,12 @@ class TaskApiIntegrationTest {
 
     @Test
     void create_shouldRejectBlankTitle() {
+        TestAccount account = createAccount();
         ResponseEntity<String> response = restTemplate.postForEntity(
                 "/api/v1/tasks",
                 new HttpEntity<>(
                         Map.of("title", " ", "description", "Invalid task"),
-                        authenticatedHeaders()
+                        account.headers()
                 ),
                 String.class
         );
@@ -240,10 +364,7 @@ class TaskApiIntegrationTest {
     private ResponseEntity<Map> register(String email, String password) {
         return restTemplate.postForEntity(
                 "/api/v1/auth/register",
-                new HttpEntity<>(
-                        Map.of("email", email, "password", password),
-                        jsonHeaders()
-                ),
+                new HttpEntity<>(Map.of("email", email, "password", password), jsonHeaders()),
                 Map.class
         );
     }
@@ -251,25 +372,43 @@ class TaskApiIntegrationTest {
     private ResponseEntity<Map> login(String email, String password) {
         return restTemplate.postForEntity(
                 "/api/v1/auth/login",
-                new HttpEntity<>(
-                        Map.of("email", email, "password", password),
-                        jsonHeaders()
-                ),
+                new HttpEntity<>(Map.of("email", email, "password", password), jsonHeaders()),
                 Map.class
         );
     }
 
-    private HttpHeaders authenticatedHeaders() {
+    private TestAccount createAccount() {
         String email = uniqueEmail();
-        assertThat(register(email, TEST_PASSWORD).getStatusCode())
-                .isEqualTo(HttpStatus.CREATED);
+        assertThat(register(email, TEST_PASSWORD).getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return authenticatedAccount(email);
+    }
 
+    private TestAccount createAdminAccount() {
+        String email = uniqueEmail();
+        User admin = userRepository.saveAndFlush(
+                new User(email, passwordEncoder.encode(TEST_PASSWORD), UserRole.ADMIN)
+        );
+        return authenticatedAccount(admin.getEmail());
+    }
+
+    private TestAccount authenticatedAccount(String email) {
         ResponseEntity<Map> loginResponse = login(email, TEST_PASSWORD);
         assertThat(loginResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 
         HttpHeaders headers = jsonHeaders();
         headers.setBearerAuth((String) loginResponse.getBody().get("accessToken"));
-        return headers;
+        User user = userRepository.findByEmail(email).orElseThrow();
+        return new TestAccount(user, headers);
+    }
+
+    private TaskResponse createTask(TestAccount account, String title, String description) {
+        ResponseEntity<TaskResponse> response = restTemplate.postForEntity(
+                "/api/v1/tasks",
+                new HttpEntity<>(new CreateTaskRequest(title, description), account.headers()),
+                TaskResponse.class
+        );
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        return response.getBody();
     }
 
     private HttpHeaders jsonHeaders() {
@@ -280,5 +419,8 @@ class TaskApiIntegrationTest {
 
     private String uniqueEmail() {
         return "user-" + UUID.randomUUID() + "@example.com";
+    }
+
+    private record TestAccount(User user, HttpHeaders headers) {
     }
 }

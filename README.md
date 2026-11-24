@@ -7,13 +7,13 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 - User registration and JWT authentication
 - BCrypt password hashing; plain-text passwords are never stored
 - Stateless Spring Security and Bearer-token validation
-- USER and ADMIN role authorities carried by JWTs
+- USER and ADMIN roles
 - Task CRUD, pagination, sorting, status filtering and title search
+- Task ownership: USER accounts can only access their own tasks
+- ADMIN accounts can read and manage tasks across users
 - PostgreSQL, Flyway migrations, OpenAPI / Swagger UI
 - Unit and PostgreSQL integration tests with Testcontainers
 - Docker Compose and GitHub Actions CI
-
-> This milestone authenticates requests. Task ownership / tenant isolation and role-based endpoint restrictions are next. Currently, any authenticated user can access the shared task collection.
 
 ## Tech stack
 
@@ -27,7 +27,7 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 
 `HTTP Request -> Spring Security JWT Filter -> Controller -> Service -> Repository -> PostgreSQL`
 
-The security filter validates a Bearer JWT before protected controller methods run. Controllers handle HTTP concerns, services contain business operations, repositories access PostgreSQL, and DTOs define the API contract. JPA entities are not exposed directly.
+The security filter validates a Bearer JWT before protected controller methods run. The task service scopes queries to the authenticated user unless that user has the ADMIN role.
 
 See [docs/architecture.md](docs/architecture.md).
 
@@ -38,15 +38,13 @@ See [docs/architecture.md](docs/architecture.md).
 - Maven 3.6.3+ (only needed when running Maven directly)
 - OpenSSL (optional, to generate a local JWT signing key)
 
-Check Java: 
-
 ~~~bash
 java -version
 ~~~
 
 ## Configure JWT signing key
 
-The checked-in Base64 fallback is for local development only. Set a private key before deploying or sharing an environment. Generate 48 random bytes:
+The checked-in Base64 fallback is for local development only. Set a private key before deploying or sharing an environment:
 
 ~~~bash
 export JWT_SECRET_BASE64="$(openssl rand -base64 48)"
@@ -102,7 +100,7 @@ curl -i -X POST http://localhost:8080/api/v1/auth/register \\
   -d '{"email":"developer@example.com","password":"Password123!"}'
 ~~~
 
-A successful registration returns 201 Created, the profile and the default USER role. The password is stored as a BCrypt hash.
+A successful registration returns 201 Created, the profile and default USER role. The password is stored as a BCrypt hash. Clients cannot choose their own role during registration.
 
 Password rules: 8 to 72 characters; BCrypt's 72-byte input limit is also enforced. Email addresses are trimmed and normalized to lowercase.
 
@@ -133,7 +131,15 @@ curl http://localhost:8080/api/v1/tasks \\
   -H "Authorization: Bearer <JWT>"
 ~~~
 
-All /api/v1/tasks/** endpoints require a valid token. Registration, login, Swagger UI and OpenAPI docs are public.
+All /api/v1/tasks/** endpoints require a valid token.
+
+## Task ownership and roles
+
+- USER: can create tasks and list, view, update or delete only tasks whose owner is the authenticated account.
+- ADMIN: can list, view, update or delete tasks across all users.
+- Task ownership is derived from the verified JWT principal on the server. A request body cannot set or change the owner.
+- Public registration always assigns USER. ADMIN accounts must be provisioned by a trusted operator; there is deliberately no public role-escalation endpoint.
+- Existing tasks from before the ownership migration keep a NULL owner rather than being silently reassigned. They are visible only to ADMIN users until an operator migrates or removes them.
 
 ## Task API endpoints
 
@@ -141,12 +147,12 @@ Base URL: http://localhost:8080/api/v1/tasks
 
 | Method | Endpoint | Description | Success |
 |---|---|---|---|
-| POST | /api/v1/tasks | Create a task | 201 Created |
-| GET | /api/v1/tasks | List tasks with pagination and filters | 200 OK |
-| GET | /api/v1/tasks/{id} | Get one task | 200 OK |
-| PUT | /api/v1/tasks/{id} | Update title, description and status | 200 OK |
-| PATCH | /api/v1/tasks/{id}/status | Update only the status | 200 OK |
-| DELETE | /api/v1/tasks/{id} | Delete a task | 204 No Content |
+| POST | /api/v1/tasks | Create a task for the authenticated user | 201 Created |
+| GET | /api/v1/tasks | List own tasks (ADMIN: all tasks) | 200 OK |
+| GET | /api/v1/tasks/{id} | Get an accessible task | 200 OK |
+| PUT | /api/v1/tasks/{id} | Update an accessible task | 200 OK |
+| PATCH | /api/v1/tasks/{id}/status | Update an accessible task status | 200 OK |
+| DELETE | /api/v1/tasks/{id} | Delete an accessible task | 204 No Content |
 
 All task requests require Authorization: Bearer <JWT>.
 
@@ -184,7 +190,7 @@ The paginated response contains content, page, size, totalElements, totalPages, 
 - Invalid request payload, pagination value or sort option: 400 Bad Request.
 - Invalid login credentials or missing / invalid JWT: 401 Unauthorized.
 - Duplicate email: 409 Conflict.
-- Unknown task ID: 404 Not Found.
+- Unknown task ID or a task owned by another USER: 404 Not Found (the API does not reveal another user's resource).
 - Successful deletion: 204 No Content.
 
 Application validation errors use Spring ProblemDetail. Spring Security handles authentication failures.
@@ -197,7 +203,7 @@ Run unit and integration tests:
 mvn clean verify
 ~~~
 
-The integration test starts a disposable PostgreSQL 17 container through Testcontainers. Docker must be running locally. Tests cover registration, duplicate email, BCrypt password hashing, login, rejected credentials, JWT-protected routes and the task API.
+The integration test starts a disposable PostgreSQL 17 container through Testcontainers. Docker must be running locally. Tests cover registration, duplicate email, BCrypt, login, rejected credentials, JWT protection, user isolation, ADMIN access and the task API.
 
 ## Configuration
 
@@ -215,7 +221,7 @@ Database credentials and JWT fallback are local-development defaults only. Do no
 ## Planned milestones
 
 1. CRUD API, pagination, search, OpenAPI and PostgreSQL integration tests — complete.
-2. User persistence, registration, login, BCrypt and JWT authentication — implemented; CI verification pending.
-3. Task ownership, user data isolation and role-based endpoint authorization — next.
+2. User persistence, registration, login, BCrypt and JWT authentication — complete.
+3. Task ownership and USER / ADMIN authorization — implemented; CI verification pending.
 4. Projects, task assignment and comments.
 5. Deployment, monitoring and observability.

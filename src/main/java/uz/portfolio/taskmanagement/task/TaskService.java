@@ -5,6 +5,9 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import uz.portfolio.taskmanagement.task.dto.CreateTaskRequest;
@@ -13,6 +16,8 @@ import uz.portfolio.taskmanagement.task.dto.TaskResponse;
 import uz.portfolio.taskmanagement.task.dto.UpdateTaskRequest;
 import uz.portfolio.taskmanagement.task.exception.InvalidTaskQueryException;
 import uz.portfolio.taskmanagement.task.exception.TaskNotFoundException;
+import uz.portfolio.taskmanagement.user.User;
+import uz.portfolio.taskmanagement.user.UserRepository;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -27,14 +32,17 @@ public class TaskService {
             Set.of("id", "title", "status", "createdAt");
 
     private final TaskRepository taskRepository;
+    private final UserRepository userRepository;
 
-    public TaskService(TaskRepository taskRepository) {
+    public TaskService(TaskRepository taskRepository, UserRepository userRepository) {
         this.taskRepository = taskRepository;
+        this.userRepository = userRepository;
     }
 
     @Transactional
     public TaskResponse create(CreateTaskRequest request) {
-        Task task = new Task(request.title().trim(), request.description());
+        User owner = getCurrentUser();
+        Task task = new Task(request.title().trim(), request.description(), owner);
         return TaskResponse.from(taskRepository.save(task));
     }
 
@@ -65,6 +73,9 @@ public class TaskService {
             throw new InvalidTaskQueryException("direction must be either 'asc' or 'desc'");
         }
 
+        boolean admin = isAdmin();
+        Long ownerId = admin ? null : getCurrentUser().getId();
+
         Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sortBy));
         String normalizedSearch = search == null || search.isBlank()
                 ? null
@@ -73,6 +84,10 @@ public class TaskService {
         Specification<Task> specification = (root, query, criteriaBuilder) -> {
             var predicates = new ArrayList<jakarta.persistence.criteria.Predicate>();
 
+            // Non-admin users are always scoped to their own records at database level.
+            if (!admin) {
+                predicates.add(criteriaBuilder.equal(root.get("owner").get("id"), ownerId));
+            }
             if (status != null) {
                 predicates.add(criteriaBuilder.equal(root.get("status"), status));
             }
@@ -93,30 +108,53 @@ public class TaskService {
     }
 
     public TaskResponse findById(Long id) {
-        return TaskResponse.from(getTaskOrThrow(id));
+        return TaskResponse.from(getAccessibleTaskOrThrow(id));
     }
 
     @Transactional
     public TaskResponse update(Long id, UpdateTaskRequest request) {
-        Task task = getTaskOrThrow(id);
+        Task task = getAccessibleTaskOrThrow(id);
         task.update(request.title().trim(), request.description(), request.status());
         return TaskResponse.from(taskRepository.save(task));
     }
 
     @Transactional
     public TaskResponse updateStatus(Long id, TaskStatus status) {
-        Task task = getTaskOrThrow(id);
+        Task task = getAccessibleTaskOrThrow(id);
         task.update(task.getTitle(), task.getDescription(), status);
         return TaskResponse.from(taskRepository.save(task));
     }
 
     @Transactional
     public void delete(Long id) {
-        taskRepository.delete(getTaskOrThrow(id));
+        taskRepository.delete(getAccessibleTaskOrThrow(id));
     }
 
-    private Task getTaskOrThrow(Long id) {
-        return taskRepository.findById(id)
+    private Task getAccessibleTaskOrThrow(Long id) {
+        if (isAdmin()) {
+            return taskRepository.findById(id)
+                    .orElseThrow(() -> new TaskNotFoundException(id));
+        }
+
+        User currentUser = getCurrentUser();
+        return taskRepository.findOwnedTaskById(id, currentUser.getId())
                 .orElseThrow(() -> new TaskNotFoundException(id));
+    }
+
+    private User getCurrentUser() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new IllegalStateException("An authenticated user is required");
+        }
+
+        return userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new IllegalStateException("Authenticated user no longer exists"));
+    }
+
+    private boolean isAdmin() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch("ROLE_ADMIN"::equals);
     }
 }
