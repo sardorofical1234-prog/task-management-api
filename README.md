@@ -50,6 +50,8 @@ A USER can access tasks they created, tasks in projects where they are a member,
 
 See [the detailed architecture and ER diagram](docs/architecture.md).
 
+For a CV-ready project summary, a short interview pitch and a practical demo walkthrough, see the [portfolio presentation guide](docs/portfolio-guide.md).
+
 ## Requirements
 
 - Java 21
@@ -344,4 +346,4 @@ Database credentials and JWT fallback are local-development defaults only. Do no
 2. Registration, BCrypt, JWT authentication and USER / ADMIN authorization — complete.
 3. Task ownership — complete.
 4. Projects, project membership, task assignment and comments — complete (Java 21 CI passed; 18 tests).
-5. Local portfolio demo, production profile, health checks, Docker image CI and Postman collection — configured; no paid hosting required.
+5. Local portfolio demo, production profile, health checks, Docker Compose smoke test, Newman API integration tests and presentation documentation — complete; CI verified, no paid hosting required.
