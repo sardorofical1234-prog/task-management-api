@@ -100,10 +100,10 @@ class TaskApiIntegrationTest {
         );
 
         assertThat(readiness.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(readiness.getBody()).contains("\\"status\\":\\"UP\\"");
+        assertThat(readiness.getBody()).contains("\"status\":\"UP\"");
         assertThat(readiness.getBody()).doesNotContain("components");
         assertThat(liveness.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(liveness.getBody()).contains("\\"status\\":\\"UP\\"");
+        assertThat(liveness.getBody()).contains("\"status\":\"UP\"");
         assertThat(liveness.getBody()).doesNotContain("components");
     }
 
