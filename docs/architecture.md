@@ -85,6 +85,44 @@ Project deletion cascades membership rows and sets tasks' project_id to NULL to 
 - Repositories: persist users, projects, project memberships, tasks and comments.
 - Flyway: applies versioned database migrations.
 
+
+## Database entity relationships
+
+~~~mermaid
+erDiagram
+    USER ||--o{ PROJECT : owns
+    USER ||--o{ PROJECT_MEMBER : joins
+    PROJECT ||--o{ PROJECT_MEMBER : has
+    USER o|--o{ TASK : owns
+    USER o|--o{ TASK : receives
+    PROJECT o|--o{ TASK : contains
+    TASK ||--o{ TASK_COMMENT : has
+    USER ||--o{ TASK_COMMENT : writes
+~~~
+
+Relationship notes:
+
+- `PROJECT_MEMBER` is the join entity for the many-to-many relationship between users and projects.
+- A task may be standalone (no project) and may be unassigned.
+- A task owner is nullable to preserve legacy rows created before ownership was introduced.
+- A comment always belongs to one task and has one author.
+
+## Continuous integration pipeline
+
+~~~mermaid
+flowchart TD
+    A["Push to main / Pull request"] --> B["Java 21 + Maven verify"]
+    B --> C["Validate Postman JSON"]
+    C --> D["Build and start Docker Compose"]
+    D --> E["Wait for API + PostgreSQL readiness"]
+    E --> F["Run 10-request Newman collection"]
+    F --> G["Check Swagger and JWT protection"]
+    G --> H["Stop containers and remove CI volume"]
+    H --> I["CI success"]
+~~~
+
+The Newman collection covers registration, login and JWT handling, task creation/listing/status changes, project creation, project task creation, comments and readiness. Docker logs are printed when a step fails, and the workflow always removes the temporary Compose resources.
+
 ## Integration testing
 
 Tests run against PostgreSQL 17 using Testcontainers. They verify authentication, owner isolation, project membership, task assignment, comments and ADMIN cross-user access.

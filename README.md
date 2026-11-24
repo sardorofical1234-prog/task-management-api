@@ -1,6 +1,11 @@
 # Task Management API
 
-A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
+[![Java CI](https://github.com/sardorofical1234-prog/task-management-api/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sardorofical1234-prog/task-management-api/actions/workflows/ci.yml)
+![Java 21](https://img.shields.io/badge/Java-21-orange)
+![Spring Boot 3.5.16](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen)
+![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-blue)
+
+A backend portfolio REST API built with Java 21 and Spring Boot 3.5.16. It demonstrates authentication, authorization, relational data modeling, project collaboration, automated testing and containerized execution.
 
 ## Features
 
@@ -29,11 +34,21 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 
 ## Architecture
 
-HTTP Request -> JWT Filter -> Controller -> Service -> Repository -> PostgreSQL
+~~~mermaid
+flowchart TD
+    A["Client / Postman"] --> B["Spring Security"]
+    B -->|"Valid JWT"| C["REST Controllers"]
+    B -->|"Missing or invalid JWT"| X["401 Unauthorized"]
+    C --> D["Application Services"]
+    D --> E["Ownership and membership checks"]
+    E --> F["Spring Data JPA Repositories"]
+    F --> G[("PostgreSQL 17")]
+    H["Flyway migrations"] --> G
+~~~
 
-A USER can access their own tasks, tasks in projects where they are a member, and tasks assigned to them. Project owners manage project membership and assignment. ADMIN can access resources across users.
+A USER can access tasks they created, tasks in projects where they are a member, and tasks assigned to them. Project owners manage project membership and assignment. ADMIN can access resources across users.
 
-See [docs/architecture.md](docs/architecture.md).
+See [the detailed architecture and ER diagram](docs/architecture.md).
 
 ## Requirements
 
@@ -84,7 +99,7 @@ The first build downloads dependencies and creates the containers. When both ser
 2. Import and select `postman/Local.postman_environment.json`.
 3. Run the collection requests from top to bottom.
 
-The collection registers a fresh demo user, logs in, stores the JWT automatically, creates a task and project, creates a project task, and adds/lists a comment. The demo password is for local testing only. Do not reuse it for a real account.
+The collection registers a fresh demo user, logs in, stores the JWT automatically, creates a task and project, creates a project task, and adds/lists a comment. Each request has response assertions and the full collection also runs in GitHub Actions through Newman. The demo password is for local testing only. Do not reuse it for a real account.
 
 Stop the containers:
 
@@ -120,7 +135,9 @@ Every push to `main` and pull request targeting `main` runs the GitHub Actions w
 6. Confirm Swagger UI is reachable and an unauthenticated request to `/api/v1/tasks` returns `401 Unauthorized`.
 7. Print container logs on failure and always stop the containers and remove the temporary CI database volume.
 
-This is a runtime and API integration test, not a public deployment. It runs entirely on GitHub-hosted CI and requires no paid hosting account.
+Latest verified run: [GitHub Actions](https://github.com/sardorofical1234-prog/task-management-api/actions/workflows/ci.yml).
+
+The pipeline currently verifies 18 Java unit/integration tests, 10 Newman API requests with 10 assertions, Docker Compose startup, PostgreSQL readiness, Swagger availability and unauthenticated access rejection. This is a runtime and API integration test, not a public deployment. It runs entirely on GitHub-hosted CI and requires no paid hosting account.
 
 ## Authentication API
 
