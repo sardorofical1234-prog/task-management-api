@@ -24,3 +24,6 @@ jobs:
           cache: maven
       - name: Verify with Maven
         run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Build Docker image
+        run: docker build --tag task-management-api:${{ github.sha }} .

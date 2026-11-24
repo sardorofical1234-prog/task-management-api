@@ -5,3 +5,9 @@
 target
 *.iml
 .env
+.env.*
+!.env.example
+README.md
+docs
+compose.yaml
+render.yaml

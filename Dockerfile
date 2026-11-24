@@ -11,4 +11,4 @@ RUN groupadd --system spring && useradd --system --gid spring spring
 COPY --from=build /workspace/target/task-management-api-0.0.1-SNAPSHOT.jar app.jar
 USER spring:spring
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "/app/app.jar"]
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]

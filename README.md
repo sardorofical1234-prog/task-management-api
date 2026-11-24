@@ -12,15 +12,16 @@ A portfolio REST API built with Java 21 and Spring Boot 3.5.16.
 - Projects with owner-controlled membership
 - Task creation inside projects and assignment to project members
 - Task comments with access checks
-- PostgreSQL, Flyway, OpenAPI / Swagger UI
+- PostgreSQL, Flyway, OpenAPI / Swagger UI (disabled in production)
+- Actuator liveness/readiness probes with database connectivity checks
 - Unit and PostgreSQL integration tests with Testcontainers
-- Docker Compose and GitHub Actions CI
+- Docker Compose, Render Blueprint and GitHub Actions CI
 
 ## Tech stack
 
 - Java 21, Spring Boot 3.5.16, Maven
 - Spring Web, Validation, Spring Data JPA
-- Spring Security, OAuth2 Resource Server JWT
+- Spring Security, OAuth2 Resource Server JWT, Spring Boot Actuator
 - PostgreSQL 17, Flyway
 - springdoc-openapi, JUnit 5, Mockito, Testcontainers, Docker
 
@@ -244,6 +245,39 @@ Comments are limited to 2,000 characters and include author identity and creatio
 
 Application validation errors use Spring ProblemDetail. Spring Security handles authentication failures.
 
+## Production profile and health checks
+
+The `prod` Spring profile is designed for hosted environments:
+
+- Requires `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD` and `JWT_SECRET_BASE64`.
+- Does not fall back to the development JWT key. The application fails to start if the production secret is missing.
+- Disables Swagger UI and OpenAPI document endpoints.
+- Uses graceful shutdown, forwarded headers and conservative production error responses.
+- Exposes only health status, not component or database details.
+
+Health endpoints:
+
+| Endpoint | Purpose |
+|---|---|
+| `/actuator/health/liveness` | Confirms the process is alive |
+| `/actuator/health/readiness` | Confirms the app is ready and PostgreSQL is reachable |
+
+The readiness endpoint is public for hosting-platform probes, but it returns status only. Other Actuator endpoints are not exposed.
+
+## Deploy to Render
+
+The root `render.yaml` is a Render Blueprint for the Docker-based API and PostgreSQL 17 in the Frankfurt region. It generates a JWT secret in Render and uses the readiness endpoint for deployment health checks. Automatic deployments are configured to wait for GitHub CI checks to pass.
+
+1. Push the repository to GitHub (already done for this project).
+2. In Render, choose **New → Blueprint**, connect this repository and select the `main` branch.
+3. Review the resources and environment variables in the Blueprint, then apply it.
+4. After deployment, open `https://<your-service>.onrender.com/actuator/health/readiness`. A healthy response contains `"status":"UP"`.
+5. Use `https://<your-service>.onrender.com/swagger-ui.html` only in local development; API docs are intentionally disabled in the production profile.
+
+**Important:** the Blueprint currently selects Render's Free plan for a portfolio demo. Free web services can spin down when idle, and Free PostgreSQL databases expire after 30 days. Upgrade the web service and database to paid plans before relying on it or storing data you need to keep. Render documents the Free-tier limitations in its [official guide](https://render.com/docs/free). In particular, the database must be upgraded before expiration; otherwise its data is eventually deleted.
+
+For a durable hosted environment, select a paid web-service plan and a paid PostgreSQL plan (for example, `basic-256mb`) in `render.yaml` before applying the Blueprint.
+
 ## Tests
 
 Run unit and integration tests:
@@ -259,7 +293,10 @@ The integration test uses a disposable PostgreSQL 17 container through Testconta
 | Variable | Default | Purpose |
 |---|---|---|
 | SERVER_PORT | 8080 | HTTP port |
-| DB_URL | jdbc:postgresql://localhost:5432/task_management | JDBC URL |
+| DB_URL | jdbc:postgresql://localhost:5432/task_management | JDBC URL override (local/Compose) |
+| DB_HOST | localhost | PostgreSQL hostname (production profile) |
+| DB_PORT | 5432 | PostgreSQL port (production profile) |
+| DB_NAME | task_management | PostgreSQL database name (production profile) |
 | DB_USERNAME | task_user | Database username |
 | DB_PASSWORD | task_password | Database password |
 | JWT_SECRET_BASE64 | Development-only key | Base64 HMAC signing key; replace outside local development |
@@ -273,4 +310,4 @@ Database credentials and JWT fallback are local-development defaults only. Do no
 2. Registration, BCrypt, JWT authentication and USER / ADMIN authorization — complete.
 3. Task ownership — complete.
 4. Projects, project membership, task assignment and comments — complete (Java 21 CI passed; 18 tests).
-5. Deployment, monitoring and observability.
+5. Production profile, Actuator health checks, Docker image CI and Render Blueprint — configured; live deployment still requires applying the Blueprint in a Render account.
