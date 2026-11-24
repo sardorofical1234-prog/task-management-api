@@ -1,57 +1,74 @@
 # Task Management API
 
-A portfolio REST API for managing tasks, built with Java 21 and Spring Boot. Milestone 1 focuses on a clean layered architecture, PostgreSQL persistence, validation, and complete CRUD operations. Authentication and role-based authorization will follow in later milestones.
+A portfolio REST API for managing tasks, built with Java 21 and Spring Boot 3.5.16.
+
+## Current features
+
+- Create, list, retrieve, update and delete tasks
+- Pagination with page and size
+- Sorting by an allow-listed task field
+- Filter by task status
+- Case-insensitive search in task titles
+- Update a task status independently with PATCH
+- Request validation and structured HTTP errors
+- PostgreSQL persistence and Flyway schema migrations
+- OpenAPI documentation and Swagger UI
+- Unit and PostgreSQL integration tests with Testcontainers
+- Docker Compose and GitHub Actions CI
 
 ## Tech stack
 
 - Java 21
 - Spring Boot 3.5.16
-- Maven
-- Spring Web and Bean Validation
-- Spring Data JPA / Hibernate
-- PostgreSQL 17
-- Flyway
-- JUnit 5, Mockito and AssertJ
-- Docker and Docker Compose
-- GitHub Actions
-
-## Features
-
-- Create, list, retrieve, update and delete tasks
-- Validate request data
-- Persist tasks in PostgreSQL
-- Manage schema changes with Flyway
-- Return structured 400 and 404 errors
-- Run the API and database with Docker Compose
-- Run automated tests in GitHub Actions
+- Spring Web, Bean Validation and Spring Data JPA
+- PostgreSQL 17 and Flyway
+- springdoc-openapi 2.10.1
+- JUnit 5, Mockito and Testcontainers
+- Maven and Docker
 
 ## Architecture
 
 `HTTP Request -> TaskController -> TaskService -> TaskRepository -> PostgreSQL`
 
-The controller handles HTTP concerns, the service contains business operations, the repository handles persistence, and DTOs define the API contract. JPA entities are not returned directly from the API. See [docs/architecture.md](docs/architecture.md).
+The controller handles HTTP concerns, the service validates query options and contains business operations, the repository queries PostgreSQL, and DTOs define the API contract. JPA entities are not exposed directly.
+
+See [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
 - Java 21
-- Docker Desktop or Docker Engine with the Compose plugin
+- Docker Desktop or Docker Engine with Docker Compose
 - Maven 3.6.3+ (only needed when running Maven directly)
 
-Check Java: `java -version`
+Check your Java version:
 
-## Run everything with Docker Compose
+```bash
+java -version
+```
 
-From the repository root:
+## Run the API and PostgreSQL
 
 ```bash
 docker compose up --build
 ```
 
-The API is available at `http://localhost:8080` and PostgreSQL at `localhost:5432`.
+API base URL: `http://localhost:8080`
 
-Stop containers: `docker compose down`
+Swagger UI: [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 
-Remove containers and the local database volume (deletes local data): `docker compose down -v`
+OpenAPI JSON: [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
+
+Stop containers:
+
+```bash
+docker compose down
+```
+
+Remove containers and the local database volume (this deletes local database data):
+
+```bash
+docker compose down -v
+```
 
 ## Run locally (database in Docker)
 
@@ -61,7 +78,7 @@ Start PostgreSQL:
 docker compose up -d postgres
 ```
 
-Run the application using Java 21 and Maven:
+Start Spring Boot with Java 21:
 
 ```bash
 mvn spring-boot:run
@@ -74,53 +91,82 @@ Base URL: `http://localhost:8080/api/v1/tasks`
 | Method | Endpoint | Description | Success |
 |---|---|---|---|
 | POST | `/api/v1/tasks` | Create a task | 201 Created |
-| GET | `/api/v1/tasks` | List all tasks | 200 OK |
+| GET | `/api/v1/tasks` | List tasks with pagination and filters | 200 OK |
 | GET | `/api/v1/tasks/{id}` | Get one task | 200 OK |
-| PUT | `/api/v1/tasks/{id}` | Update a task | 200 OK |
+| PUT | `/api/v1/tasks/{id}` | Update title, description and status | 200 OK |
+| PATCH | `/api/v1/tasks/{id}/status` | Update only the status | 200 OK |
 | DELETE | `/api/v1/tasks/{id}` | Delete a task | 204 No Content |
 
 ### Create a task
 
 ```bash
-curl -i -X POST http://localhost:8080/api/v1/tasks \\
-  -H 'Content-Type: application/json' \\
+curl -i -X POST http://localhost:8080/api/v1/tasks \
+  -H 'Content-Type: application/json' \
   -d '{"title":"Learn Spring Boot","description":"Build the first API endpoint"}'
 ```
 
-Example response shape (ID and timestamp are generated):
+### List, paginate, sort, filter and search
 
-```json
-{
-  "id": 1,
-  "title": "Learn Spring Boot",
-  "description": "Build the first API endpoint",
-  "status": "TODO",
-  "createdAt": "2026-11-24T12:00:00Z"
-}
+```http
+GET /api/v1/tasks?page=0&size=10&sortBy=createdAt&direction=desc&status=TODO&search=spring
 ```
 
-### Update a task
+Query parameters:
+
+| Parameter | Default | Rules |
+|---|---|---|
+| `page` | `0` | Zero-based page index; 0 or greater |
+| `size` | `10` | Between 1 and 100 |
+| `sortBy` | `createdAt` | `id`, `title`, `status` or `createdAt` |
+| `direction` | `desc` | `asc` or `desc` |
+| `status` | omitted | `TODO`, `IN_PROGRESS` or `DONE` |
+| `search` | omitted | Case-insensitive substring match in task title |
+
+Example:
 
 ```bash
-curl -i -X PUT http://localhost:8080/api/v1/tasks/1 \\
-  -H 'Content-Type: application/json' \\
-  -d '{"title":"Learn Spring Boot","description":"Complete CRUD","status":"IN_PROGRESS"}'
+curl "http://localhost:8080/api/v1/tasks?page=0&size=5&sortBy=title&direction=asc&status=TODO&search=java"
+```
+
+The paginated response contains `content`, `page`, `size`, `totalElements`, `totalPages`, `first` and `last`.
+
+### Update only task status
+
+```bash
+curl -i -X PATCH http://localhost:8080/api/v1/tasks/1/status \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"IN_PROGRESS"}'
 ```
 
 Valid statuses: `TODO`, `IN_PROGRESS`, `DONE`.
 
-## Validation and errors
+### Update a task
+
+```bash
+curl -i -X PUT http://localhost:8080/api/v1/tasks/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Learn Spring Boot","description":"Complete API CRUD","status":"IN_PROGRESS"}'
+```
+
+## Validation and error handling
 
 - Blank title or title longer than 120 characters: `400 Bad Request`.
 - Description longer than 2000 characters: `400 Bad Request`.
-- Task ID does not exist: `404 Not Found`.
+- Invalid pagination values, sort fields or sort directions: `400 Bad Request`.
+- Unknown task ID: `404 Not Found`.
 - Successful deletion: `204 No Content`.
 
-## Run tests
+Error responses use Spring's `ProblemDetail` format.
+
+## Tests
+
+Run unit and integration tests:
 
 ```bash
-mvn test
+mvn clean verify
 ```
+
+The integration test starts a real PostgreSQL 17 container through Testcontainers. Docker must be running locally to execute these integration tests.
 
 ## Configuration
 
@@ -131,12 +177,11 @@ mvn test
 | `DB_USERNAME` | `task_user` | Database username |
 | `DB_PASSWORD` | `task_password` | Database password |
 
-These credentials are local-development defaults only. Do not use them in production.
+The credentials above are local-development defaults only. Do not use them in production.
 
 ## Planned milestones
 
-1. CRUD API, PostgreSQL, migrations, validation and unit tests (current).
-2. Pagination, filtering and integration tests with Testcontainers.
-3. Spring Security, JWT and role-based access control.
-4. Projects, task assignment, comments and authorization rules.
-5. Deployment and observability.
+1. CRUD API, pagination, filtering, search, OpenAPI and PostgreSQL integration tests.
+2. User registration, Spring Security, JWT and role-based access control.
+3. Projects, task assignment, comments and authorization rules.
+4. Deployment, monitoring and observability.

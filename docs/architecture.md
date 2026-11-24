@@ -1,25 +1,59 @@
-# Architecture — milestone 1
+# Architecture — Advanced Task API
 
 ## Request lifecycle
 
-`Client -> TaskController -> TaskService -> TaskRepository -> PostgreSQL`
+```mermaid
+flowchart TD
+    A["HTTP Request"] --> B["TaskController"]
+    B --> C["TaskService"]
+    C --> D["Task Specification + Pageable"]
+    D --> E["TaskRepository"]
+    E --> F[("PostgreSQL")]
+    F --> E
+    E --> C
+    C --> G["PageResponse DTO"]
+    G --> B
+    B --> H["HTTP JSON Response"]
+```
 
-The controller validates the request DTO and delegates to the service. The service performs the use case and calls the repository. The repository uses Spring Data JPA and Hibernate to communicate with PostgreSQL. The service maps the entity to a response DTO before returning it.
+## Responsibilities
 
-## Current modules
+- **Controller:** maps HTTP routes, reads query parameters, validates request bodies and selects HTTP response codes.
+- **Service:** validates pagination/sort options, normalizes search input and builds a JPA Specification.
+- **Repository:** executes the generated query and count query through Spring Data JPA.
+- **Entity:** represents the persisted task record.
+- **DTOs:** define request and response shapes; JPA entities are never returned directly.
+- **GlobalExceptionHandler:** maps application, validation and parameter conversion errors to HTTP 400 or 404 Problem Details.
 
-- `task`: entity, status enum, repository, service, controller and DTOs.
-- `common.exception`: centralized REST error handling.
-- `resources/db/migration`: versioned schema migrations managed by Flyway.
+## GET /api/v1/tasks
 
-## Design decisions
+Supported query parameters:
 
-1. Controllers do not contain business logic.
-2. DTOs define the API contract; JPA entities are not exposed.
-3. `TaskService` is transactional for write operations and read-only by default.
-4. Hibernate schema generation is set to `validate`; Flyway owns schema changes.
-5. Task status is persisted as a string so database values remain readable.
+- `page`: zero-based page index, default 0.
+- `size`: page size, default 10, maximum 100.
+- `sortBy`: allow-listed fields `id`, `title`, `status`, `createdAt`.
+- `direction`: `asc` or `desc`, default desc.
+- `status`: optional task status.
+- `search`: optional case-insensitive substring search on title.
 
-## Scope boundary
+The allowed sort-field list prevents arbitrary property names from being passed to Spring Data sorting.
 
-This milestone deliberately has no authentication or user ownership yet. JWT, users and role-based authorization will be introduced after the CRUD and persistence flow is understood and tested.
+## Filtering
+
+A JPA Specification builds predicates only for filters that are present. Status and title search can be combined. Spring Data applies pagination and sorting at database level instead of loading every task and filtering it in memory.
+
+## PATCH /api/v1/tasks/{id}/status
+
+The endpoint accepts only a status DTO. It loads the task, updates its status and saves it; title and description remain unchanged.
+
+## OpenAPI
+
+springdoc generates the OpenAPI definition from Spring MVC mappings and exposes Swagger UI for interactive API exploration.
+
+## Integration testing
+
+`TaskApiIntegrationTest` starts a disposable PostgreSQL container with Testcontainers, injects its connection settings into Spring Boot, runs Flyway migrations, and exercises the HTTP API against the real database.
+
+## Design boundaries
+
+This milestone does not yet implement users, ownership, authentication or authorization. Those are intentionally introduced as a separate security milestone so that the API/data-access layer can be understood and tested independently.
